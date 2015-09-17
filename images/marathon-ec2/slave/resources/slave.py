@@ -66,7 +66,7 @@ if __name__ == '__main__':
                 last = js['commits'][0]
                 summary = {'ok': 0}
 
-                logger.info('building %s @ %s' % (tag, sha))
+                logger.info('%s @ %s -> processing...' % (tag, sha[0:10]))
                 tmp = tempfile.mkdtemp()
                 try:
 
@@ -78,6 +78,7 @@ if __name__ == '__main__':
                                 line = pid.stdout.readline().rstrip('\n')
                                 code = pid.poll()
                                 if line == '' and code is not None:
+                                    logger.debug('> "%s" -> %d' % (snippet, code))
                                     return code, out
                                 out += [line]
 
@@ -140,9 +141,11 @@ if __name__ == '__main__':
                     # - update redis with
                     #
                     shutil.rmtree(tmp)
+                    seconds = int(time() - now)
                     summary['log'] = log
-                    summary['seconds'] = int(time() - now)
+                    summary['seconds'] = seconds
                     client.set(tag, json.dumps(summary))
+                    logger.info('%s @ %s -> ran in %d seconds' % (tag, sha[0:10], seconds))
 
             except Exception as failure:
 

@@ -2,8 +2,8 @@ debug: false
 steps:
 
   - |
-    cd images/dcos-ec2/slave
+    cd images/marathon-ec2/slave
     tools push -t $COMMIT_SHORT paugamo/slave
   - |
-    cd images/dcos-ec2/webhook
+    cd images/marathon-ec2/webhook
     tools push -t $COMMIT_SHORT paugamo/hook
