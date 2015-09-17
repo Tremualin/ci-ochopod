@@ -1,0 +1,28 @@
+cluster:  jenkins-slave
+image:    paugamo/test-slave
+debug:    true
+ports:
+    - 22
+
+verbatim:
+  cpus: 1.0
+  mem:  1024
+
+  #
+  # - /var/run is mapped to read the docker daemon unix socket (which we socat to TCP 9001 internally)
+  # - map your .dockercfg accordingly to where you have it setup on the underlying host
+  #
+  container:
+    volumes:
+      - containerPath:  /host/var/run
+        hostPath:       /var/run
+        mode:           RO
+
+      - containerPath:  /host/.dockercfg
+        hostPath:       /home/core/.dockercfg
+        mode:           RO
+
+  constraints:
+  -
+    - hostname
+    - UNIQUE
