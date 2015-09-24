@@ -1,14 +1,4 @@
-FROM autodeskcloud/pod:1.0.3
-
-#
-# - include sshd
-#
-RUN apt-get update && apt-get install -y sudo openssh-server
-RUN mkdir -p /var/run/sshd
-RUN adduser --gecos "" jenkins
-RUN echo 'jenkins:jenkins' | sudo -S chpasswd
-RUN echo 'jenkins ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-RUN sed -i -e 's/^\(session\s\+required\s\+pam_loginuid.so$\)/#\1/' /etc/pam.d/sshd
+FROM autodeskcloud/pod:1.0.4
 
 #
 # - install jdk8 from oracle
@@ -25,11 +15,11 @@ RUN apt-get install -y socat
 RUN pip install redis pyyaml
 
 #
-# - add our internal package containing our toolkit
-# - install it
+# - add our internal package containing our python tools
+# - install it (that will install a few scripts on the path)
 #
-ADD resources/tools /opt/tools
-RUN cd /opt/tools && python setup.py install
+ADD resources/tools /opt/python/tools
+RUN cd /opt/python/tools && python setup.py install
 
 #
 # - add our spiffy pod script

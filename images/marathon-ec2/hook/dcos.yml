@@ -1,4 +1,4 @@
-cluster:  webhook
+cluster:  hook
 image:    paugamo/test-hook
 debug:    true
 ports:

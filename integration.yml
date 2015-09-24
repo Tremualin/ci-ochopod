@@ -1,9 +1,6 @@
-debug: false
-steps:
-
-  - |
-    cd images/marathon-ec2/slave
-    tools push -t $COMMIT_SHORT paugamo/slave
-  - |
-    cd images/marathon-ec2/webhook
-    tools push -t $COMMIT_SHORT paugamo/hook
+master:
+  -
+    step: build and push the resulting docker image
+    cwd: images/marathon-ec2/servo
+    shell:
+      - tools push paugamo/servo

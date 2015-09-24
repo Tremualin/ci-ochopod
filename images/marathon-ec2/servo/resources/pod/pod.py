@@ -15,9 +15,12 @@
 # limitations under the License.
 #
 import logging
+import os
+import string
 import time
 
 from ochopod.bindings.ec2.marathon import Pod
+from ochopod.core.utils import shell
 from ochopod.models.piped import Actor as Piped
 from ochopod.models.reactive import Actor as Reactive
 
@@ -27,13 +30,21 @@ logger = logging.getLogger('ochopod')
 
 if __name__ == '__main__':
 
+    #
+    # - generate a random token (valid for the lifetime of the pod)
+    # - use it as the jenkins user's password
+    #
+    chars = string.letters + string.digits + '+/'
+    token = ''.join(chars[ord(c) % len(chars)] for c in os.urandom(32))
+    shell("echo 'jenkins:%s' | sudo -S chpasswd" % token)
+
     class Model(Reactive):
 
-        depends_on = ['redis']
+        depends_on = ['portal']
 
     class Strategy(Piped):
 
-        cwd = '/opt/slave'
+        cwd = '/opt/servo'
 
         check_every = 60.0
 
@@ -46,6 +57,7 @@ if __name__ == '__main__':
             #
             # - simply use the provided process ID to start counting time
             # - this is a cheap way to measure the sub-process up-time
+            # - display our token as well
             #
             now = time.time()
             if pid != self.pid:
@@ -54,19 +66,31 @@ if __name__ == '__main__':
 
             lapse = (now - self.since) / 3600.0
 
-            return {'uptime': '%.2f hours (pid %s)' % (lapse, pid)}
+            return \
+                {
+                    'token': token,
+                    'uptime': '%.2f hours (pid %s)' % (lapse, pid)
+                }
 
         def can_configure(self, cluster):
 
-            assert len(cluster.dependencies['redis']) == 1, 'need 1 redis'
+            assert len(cluster.dependencies['portal']) == 1, 'need 1 portal'
 
         def configure(self, cluster):
+
+            #
+            # - look the ochothon portal up @ TCP 9000
+            # - update the resulting connection string into /opt/slave/.portal
+            # - this will be used by the CI/CD scripts to issue commands
+            #
+            with open('/opt/servo/.portal', 'w') as f:
+                f.write(cluster.grep('portal', 9000))
 
             #
             # - note we use supervisor to socat the unix socket used by the underlying docker daemon
             # - it is bound to TCP 9001 (e.g any curl to localhost:9001 will talk to the docker API)
             # - run the slave
             #
-            return 'python slave.py', {'redis': cluster.grep('redis', 6379)}
+            return 'python hook.py', {'token': token}
 
     Pod().boot(Strategy, model=Model)

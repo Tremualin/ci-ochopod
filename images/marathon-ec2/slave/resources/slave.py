@@ -24,9 +24,10 @@ import shutil
 import sys
 import yaml
 
+from fnmatch import fnmatch
+from ochopod.core.utils import shell
 from ochopod.core.fsm import diagnostic
 from os import path
-from subprocess import Popen, PIPE
 from time import time
 from yaml import YAMLError
 
@@ -49,7 +50,8 @@ if __name__ == '__main__':
         settings = json.loads(env['pod'])
 
         #
-        # -
+        # - grab our redis IP
+        # - connect to it
         #
         tokens = os.environ['redis'].split(':')
         client = redis.StrictRedis(host=tokens[0], port=int(tokens[1]), db=0)
@@ -60,35 +62,25 @@ if __name__ == '__main__':
                 log = []
                 now = time()
                 js = json.loads(payload)
+                branch = js['ref'].split('/')[-1]
                 cfg = js['repository']
                 tag = cfg['full_name']
                 sha = js['after']
                 last = js['commits'][0]
-                summary = {'ok': 0}
+                summary = {'ok': 0, 'sha': sha, 'branch': branch}
 
-                logger.info('%s @ %s -> processing...' % (tag, sha[0:10]))
                 tmp = tempfile.mkdtemp()
                 try:
 
                     try:
-                        def _shell(snippet, cwd=tmp, env={}):
-                            out = []
-                            pid = Popen(snippet, shell=True, stdout=PIPE, stderr=PIPE, cwd=cwd, env=env)
-                            while 1:
-                                line = pid.stdout.readline().rstrip('\n')
-                                code = pid.poll()
-                                if line == '' and code is not None:
-                                    logger.debug('> "%s" -> %d' % (snippet, code))
-                                    return code, out
-                                out += [line]
 
                         repo = path.join(tmp, cfg['name'])
-                        branch = js['ref'].split('/')[-1]
-                        code, _ = _shell('git clone -b %s --single-branch %s' % (branch, cfg['git_url']))
+                        logger.info('building %s (%s) @ %s' % (tag, branch, sha[0:10]))
+                        code, _ = shell('git clone -b %s --single-branch %s' % (branch, cfg['git_url']), cwd=tmp)
                         assert code == 0, 'unable to git clone %s (firewall issue ?)' % cfg['git_url']
 
                         #
-                        #
+                        # -
                         #
                         local = \
                             {
@@ -108,31 +100,44 @@ if __name__ == '__main__':
                         #
                         with open(path.join(repo, 'integration.yml'), 'r') as f:
                             yml = yaml.load(f)
-                            debug = yml['debug'] if 'debug' in yml else 0
-                            for snippet in yml['steps']:
-                                code, lines = _shell(snippet, cwd=repo, env=env)
-                                log += ['> "%s" (exit %d)' % (snippet, code)]
-                                if debug:
-                                    log += ['  - %s' % line for line in lines]
-                                assert code == 0, 'failed to run "%s"' % snippet
+                                                            
+                            for regex in yml:
+                                if fnmatch(branch, regex):
 
-                        summary['ok'] = 1
+                                    #
+                                    # -
+                                    #
+                                    js = yml[regex] if isinstance(yml[regex], list) else [yml[regex]]
+                                    for blk in js:
+                                        log += ['- %s' % blk['step']]
+                                        debug = blk['debug'] if 'debug' in blk else 0
+                                        cwd = path.join(repo, blk['cwd']) if 'cwd' in blk else repo
+                                        for snippet in blk['shell']:
+                                            code, lines = shell(snippet, cwd=cwd, env=env)
+                                            status = 'passed' if not code else 'failed'
+                                            log += ['[%s] %s' % (status, snippet)]
+                                            if debug:
+                                                log += ['[%s]   . %s' % (status, line) for line in lines]
+                                            assert code == 0, 'failed to run "%s"' % snippet
+
+                            summary['ok'] = 1
+                                                                    
 
                     except AssertionError as failure:
 
-                        log += [str(failure)]
+                        log += ['* %s' % str(failure)]
 
                     except IOError:
 
-                        log += ['unable to load integration.yml (missing from the repo ?)']
+                        log += ['* unable to load integration.yml (missing from the repo ?)']
 
                     except YAMLError as failure:
 
-                        log += ['invalid YAML syntax']
+                        log += ['* invalid YAML syntax']
 
                     except Exception as failure:
 
-                        log += ['unexpected condition -> %s' % diagnostic(failure)]
+                        log += ['* unexpected condition -> %s' % diagnostic(failure)]
 
                 finally:
 
@@ -145,7 +150,7 @@ if __name__ == '__main__':
                     summary['log'] = log
                     summary['seconds'] = seconds
                     client.set(tag, json.dumps(summary))
-                    logger.info('%s @ %s -> ran in %d seconds' % (tag, sha[0:10], seconds))
+                    logger.info('%s @ %s -> %d seconds' % (tag, sha[0:10], seconds))
 
             except Exception as failure:
 

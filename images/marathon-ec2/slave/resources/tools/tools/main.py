@@ -24,7 +24,6 @@ from os.path import dirname, isfile, join
 from ochopod.core.fsm import diagnostic
 from tools.tool import Template
 
-#: Our ochopod logger.
 logger = logging.getLogger('ochopod')
 
 

@@ -14,48 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-import json
 import logging
-import time
 
 from argparse import ArgumentParser
 from logging import DEBUG
-from os.path import basename, expanduser, isfile
-from subprocess import Popen, PIPE
 
-#: Our ochopod logger.
 logger = logging.getLogger('ochopod')
 
 
-def shell(snippet):
-    """
-    Helper invoking a shell command and returning its stdout broken down by lines as a list. The sub-process
-    exit code is also returned. Since it's crucial to see what's going on when troubleshooting Jenkins the
-    shell command output is logged line by line.
-
-    :type snippet: str
-    :param snippet: shell snippet, e.g "echo foo > /bar"
-    :rtype: (int, list) 2-uple
-    """
-
-    out = []
-    logger.debug('shell> %s' % snippet)
-    pid = Popen(snippet, shell=True, stdout=PIPE, stderr=PIPE)
-    while pid.poll() is None:
-        stdout = pid.stdout.readline()
-        out += [stdout]
-        line = stdout[:-1]
-        if line:
-            logger.debug('shell> %s' % (line if len(line) < 80 else '%s...' % line[:77]))
-
-    code = pid.returncode
-    return code, out
-
 class Template():
     """
-    High-level template defining a CI/CD script. The scripts all talk to the portal and rely on its toolset to
-    perform operations such as deploying or killing containers. The portal coordinates are located in
-    /opt/slave/.portal and set by the slave's pod script.
+    High-level template defining a CI/CD tool.
     """
 
     #: Optional short tool description. This is what's displayed when using --help.
@@ -80,47 +49,11 @@ class Template():
             for handler in logger.handlers:
                 handler.setLevel(DEBUG)
 
-        #
-        # - retrieve the portal coordinates from ~/.portal
-        #
-        _, lines = shell('cat /opt/slave/.portal')
-        portal = lines[0]
-        assert portal, '/opt/slave/.portal not found (pod not yet configured ?)'
-        logger.debug('using proxy @ %s' % portal)
-        def _remote(cmdline):
-
-            #
-            # - this block is taken from cli.py in ochothon
-            # - in debug mode the verbatim response from the portal is dumped on stdout
-            #
-            now = time.time()
-            tokens = cmdline.split(' ')
-            files = ['-F %s=@%s' % (basename(token), expanduser(token)) for token in tokens if isfile(expanduser(token))]
-            line = ' '.join([basename(token) if isfile(expanduser(token)) else token for token in tokens])
-            logger.debug('"%s" -> %s' % (line, portal))
-            snippet = 'curl -X POST -H "X-Shell:%s" %s %s/shell' % (line, ' '.join(files), portal)
-            code, lines = shell(snippet)
-            assert code is 0, 'i/o failure (is the proxy portal down ?)'
-            js = json.loads(lines[0])
-            elapsed = time.time() - now
-            logger.debug('<- %s (took %.2f seconds) ->\n\t%s' % (portal, elapsed, '\n\t'.join(js['out'].split('\n'))))
-            return js
-
-        return self.body(args, _remote)
+        return self.body(args)
 
     def customize(self, parser):
         pass
 
-    def body(self, args, remote):
-        """
-        CI/CD script body. The 2nd parameter is a callable which takes a string as input and forwards it to the portal
-        as a shell request. The corresponding json response is returned as a dict.
-
-        :type args: class:`argparse.Namespace`
-        :type remote: callable
-        :param args: parsed command-line arguments
-        :param remote: prepackaged method which will forward a shell request to the portal
-        :rtype int
-        """
+    def body(self, args):
 
         raise NotImplementedError

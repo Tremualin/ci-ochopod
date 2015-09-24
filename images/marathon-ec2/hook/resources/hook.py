@@ -22,7 +22,7 @@ import redis
 import sys
 
 from datetime import datetime
-from flask import Flask, request, send_from_directory
+from flask import Flask, request, render_template
 from ochopod.core.fsm import diagnostic
 
 logger = logging.getLogger('ochopod')
@@ -45,7 +45,8 @@ if __name__ == '__main__':
         settings = json.loads(env['pod'])
 
         #
-        # -
+        # - grab our redis IP
+        # - connect to it
         #
         tokens = os.environ['redis'].split(':')
         client = redis.StrictRedis(host=tokens[0], port=int(tokens[1]), db=0)
@@ -62,22 +63,43 @@ if __name__ == '__main__':
             if payload is None:
                 return '', 404
 
-            return payload, 200, {'Content-Type': 'application/json; charset=utf-8'}
+            return payload, 200, \
+                {
+                    'Content-Type': 'application/json; charset=utf-8'
+                }
 
-        @web.route('/icon/<path:path>', methods=['GET'])
-        def _icon(path):
+        @web.route('/svg/<path:path>', methods=['GET'])
+        def _svg(path):
 
+            log = []
             payload = client.get(path)
             if payload is None:
-                return send_from_directory('static', 'unknown.png')
+                tagline = 'repo not indexed (check your git hook)'
 
-            js = json.loads(payload)
-            r = send_from_directory('static', 'passed.png' if js['ok'] else 'failed.png')
-            r.headers['Last-Modified'] = datetime.now()
-            r.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
-            r.headers['Expires'] = '-1'
-            r.headers['Pragma'] = 'no-cache'
-            return r
+            else:
+
+                #
+                # -
+                #
+                js = json.loads(payload)
+                tagline = 'integration %s (ran in %d seconds, commit %s)' % ('passed' if js['ok'] else 'failed', js['seconds'], js['sha'][0:10])
+
+                def _clip(line):
+                    chars = len(line)
+                    return line if chars <= 80 else line[0:77] + '...'
+
+                log = [_clip(line) for line in js['log']]
+
+            svg = render_template('status_80chars.svg', lines=1+len(log), tagline=tagline, log=enumerate(log))
+
+            return svg, 200, \
+                {
+                    'Content-Type': 'image/svg+xml',
+                    'Last-Modified': datetime.now(),
+                    'Cache-Control': 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0',
+                    'Expires': '-1',
+                    'Pragma': 'no-cache'
+                }
 
         @web.route('/', methods=['POST'])
         def _post():
