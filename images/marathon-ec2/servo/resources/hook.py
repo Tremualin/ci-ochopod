@@ -47,6 +47,12 @@ if __name__ == '__main__':
         ochopod.enable_cli_log(debug=hints['debug'] == 'true')
         settings = json.loads(env['pod'])
 
+        @web.route('/callback', methods=['POST'])
+        def _callback():
+            logger.info('-> callback !')
+            logger.info(request.json)
+            return '', 200
+
         @web.route('/run/<script>', methods=['POST'])
         def _from_curl(script):
 
@@ -148,7 +154,7 @@ if __name__ == '__main__':
         #
         # - run our flask endpoint on TCP 10000
         #
-        web.run(host='0.0.0.0', port=10000)
+        web.run(host='0.0.0.0', port=10000, threaded=True)
 
     except Exception as failure:
 
