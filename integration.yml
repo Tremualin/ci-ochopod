@@ -1,6 +1,6 @@
 master:
   -
-    step: build and push the resulting docker image
+    step: build and push the servo docker image
     cwd: images/marathon-ec2/servo
     shell:
       - tools push paugamo/servo
