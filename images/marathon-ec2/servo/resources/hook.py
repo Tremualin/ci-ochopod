@@ -53,7 +53,7 @@ if __name__ == '__main__':
             if id not in blocked:
                 return '', 404
 
-            logger.info('setting latch %d to %s' % (id, request.json))
+            logger.info('setting latch %s to %s' % (id, request.json))
             blocked[id].set(request.json)
             return '', 200
 
