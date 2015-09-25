@@ -26,6 +26,7 @@ import sys
 from flask import Flask, request
 from ochopod.core.fsm import diagnostic
 from os import path
+from pykka import ThreadingFuture, Timeout
 from servo import shell
 
 logger = logging.getLogger('ochopod')
@@ -40,18 +41,38 @@ if __name__ == '__main__':
         #
         # - parse our ochopod hints
         # - enable CLI logging
-        # - parse our $pod settings
         #
         env = os.environ
         hints = json.loads(env['ochopod'])
         ochopod.enable_cli_log(debug=hints['debug'] == 'true')
-        settings = json.loads(env['pod'])
 
-        @web.route('/callback', methods=['POST'])
-        def _callback():
-            logger.info('-> callback !')
-            logger.info(request.json)
+        blocked = {}
+
+        @web.route('/callback/<id>', methods=['POST'])
+        def _callback(id):
+            if id not in blocked:
+                return '', 404
+
+            logger.info('setting latch %d to %s' % (id, request.json))
+            blocked[id].set(request.json)
             return '', 200
+
+        @web.route('/callback/<id>', methods=['GET'])
+        def _callback(id):
+            assert not id in blocked, ''
+            latch = ThreadingFuture()
+            blocked[id] = latch
+            try:
+                logger.info('blocking on %s' % id)
+                return latch.get(60.0), 200, {'Content-Type': 'application/json; charset=utf-8'}
+
+            except Timeout:
+                logger.info('timeout !')
+                return '', 404
+
+            finally:
+
+                del blocked[id]
 
         @web.route('/run/<script>', methods=['POST'])
         def _from_curl(script):
