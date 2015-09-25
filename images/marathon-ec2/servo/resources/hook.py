@@ -49,7 +49,7 @@ if __name__ == '__main__':
         blocked = {}
 
         @web.route('/callback/<id>', methods=['POST'])
-        def _callback(id):
+        def _set_callback(id):
             if id not in blocked:
                 return '', 404
 
@@ -58,7 +58,7 @@ if __name__ == '__main__':
             return '', 200
 
         @web.route('/callback/<id>', methods=['GET'])
-        def _callback(id):
+        def _wait_for_callback(id):
             assert not id in blocked, ''
             latch = ThreadingFuture()
             blocked[id] = latch
