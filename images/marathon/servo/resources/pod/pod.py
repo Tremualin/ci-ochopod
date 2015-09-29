@@ -1,0 +1,106 @@
+#
+# Copyright (c) 2015 Autodesk Inc.
+# All rights reserved
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+import logging
+import os
+import string
+import time
+
+from ochopod.bindings.ec2.marathon import Pod
+from ochopod.core.utils import shell
+from ochopod.models.piped import Actor as Piped
+from ochopod.models.reactive import Actor as Reactive
+
+
+logger = logging.getLogger('ochopod')
+
+
+if __name__ == '__main__':
+
+    #
+    # - generate a random 32 characters token (valid for the lifetime of the pod)
+    # - use it as the jenkins user's password
+    #
+    alphabet = string.letters + string.digits + '+/'
+    token = ''.join(alphabet[ord(c) % len(alphabet)] for c in os.urandom(32))
+    shell("echo 'jenkins:%s' | sudo -S chpasswd" % token)
+
+    class Model(Reactive):
+
+        depends_on = ['portal']
+
+    class Strategy(Piped):
+
+        cwd = '/opt/servo'
+
+        check_every = 60.0
+
+        pid = None
+
+        since = 0.0
+
+        def sanity_check(self, pid):
+
+            #
+            # - simply use the provided process ID to start counting time
+            # - this is a cheap way to measure the sub-process up-time
+            # - display our token as well
+            #
+            now = time.time()
+            if pid != self.pid:
+                self.pid = pid
+                self.since = now
+
+            lapse = (now - self.since) / 3600.0
+
+            return \
+                {
+                    'token': token,
+                    'uptime': '%.2f hours (pid %s)' % (lapse, pid)
+                }
+
+        def can_configure(self, cluster):
+
+            assert len(cluster.dependencies['portal']) == 1, 'need 1 portal'
+
+        def configure(self, cluster):
+
+            #
+            # - get our pod details
+            # - we'll use that to get our local IP/port (used to callback)
+            #
+            pod = cluster.pods[cluster.key]
+
+            #
+            # - look the ochothon portal up @ TCP 9000
+            # - update the resulting connection string into /opt/slave/.portal
+            # - this will be used by the CI/CD scripts to issue commands
+            #
+            with open('/opt/servo/.portal', 'w') as f:
+                f.write(cluster.grep('portal', 9000))
+
+            #
+            # - note we use supervisor to socat the unix socket used by the underlying docker daemon
+            # - it is bound to TCP 9001 (e.g any curl to localhost:9001 will talk to the docker API)
+            # - run the slave
+            #
+            return 'python hook.py', \
+                   {
+                       'token': token,
+                       'local': '%s:%d' % (pod['ip'],pod['ports']['10000'])
+                   }
+
+    Pod().boot(Strategy, model=Model)

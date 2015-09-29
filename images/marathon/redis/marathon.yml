@@ -1,0 +1,14 @@
+cluster:  redis
+image:    paugamo/redis
+debug:    true
+ports:
+    - 6379
+
+verbatim:
+  cpus: 1.0
+  mem:  1024
+
+  constraints:
+  -
+    - hostname
+    - UNIQUE
