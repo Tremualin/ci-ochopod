@@ -19,6 +19,7 @@ import logging
 import ochopod
 import os
 import redis
+import requests
 import tempfile
 import shutil
 import sys
@@ -28,6 +29,7 @@ from fnmatch import fnmatch
 from ochopod.core.utils import shell
 from ochopod.core.fsm import diagnostic
 from os import path
+from requests.auth import HTTPBasicAuth
 from time import time
 from yaml import YAMLError
 
@@ -42,19 +44,22 @@ if __name__ == '__main__':
         #
         # - parse our ochopod hints
         # - enable CLI logging
-        # - parse our $pod settings (defined in marathon.yml)
+        # - parse our $pod settings (defined in the pod yml)
+        # - grab redis
+        # - connect to it
         #
         env = os.environ
         hints = json.loads(env['ochopod'])
         ochopod.enable_cli_log(debug=hints['debug'] == 'true')
         settings = json.loads(env['pod'])
-
-        #
-        # - grab our redis IP
-        # - connect to it
-        #
         tokens = os.environ['redis'].split(':')
         client = redis.StrictRedis(host=tokens[0], port=int(tokens[1]), db=0)
+
+        #
+        # -
+        #
+        git = settings['git']
+        jenkins = settings['jenkins']
 
         while 1:
             _, payload = client.blpop('queue')
@@ -78,9 +83,7 @@ if __name__ == '__main__':
                         # -
                         #
                         repo = path.join(tmp, cfg['name'])
-                        user = settings['git']['username']
-                        pwd = settings['git']['password']
-                        url = 'https://%s:%s@%s' % (user, pwd, cfg['git_url'][6:])
+                        url = 'https://%s:%s@%s' % (git['username'], git['password'], cfg['git_url'][6:])
                         logger.info('building %s (%s) @ %s' % (tag, branch, sha[0:10]))
                         code, _ = shell('git clone -b %s --single-branch %s' % (branch, url), cwd=tmp)
                         assert code == 0, 'unable to git clone %s (credentials issue ?)' % cfg['git_url']
@@ -157,6 +160,42 @@ if __name__ == '__main__':
                     summary['seconds'] = seconds
                     client.set(tag, json.dumps(summary))
                     logger.info('%s @ %s -> %d seconds' % (tag, sha[0:10], seconds))
+
+                    #
+                    # -
+                    #
+                    safe = tag.replace('/', '-')
+                    auth = HTTPBasicAuth(jenkins['username'], jenkins['token'])
+                    cb = '%s/status/%s' % (settings['front-url'], tag)
+                    script = \
+                        [
+                            '#!/bin/bash',
+                            'CODE=$(curl -H "Accept: text/plain" %s)' % cb,
+                            'if [[ $CODE -ne 200 ]] ; then',
+                            'exit 1',
+                            'fi'
+                        ]
+
+                    xml = \
+                        """
+                            <project>
+                                <actions/>
+                                <description>auto-generated CI project for repo %s</description>
+                                <builders>
+                                    <hudson.tasks.Shell>
+                                        <command>%s</command>
+                                    </hudson.tasks.Shell>
+                                </builders>
+                            </project>
+                        """
+
+                    requests.post(
+                        '%s/createItem?name=%s' % (jenkins['url'], safe),
+                        data=xml % (tag, '\n'.join(script)),
+                        headers={'Content-Type': 'application/xml'},
+                        auth=auth)
+
+                    requests.post('%s/job/%s/build' % (jenkins['url'], safe), auth=auth)
 
             except Exception as failure:
 

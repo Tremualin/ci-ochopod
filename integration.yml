@@ -1,0 +1,6 @@
+master:
+  -
+    step: build the CI slave image
+    cwd: images/marathon/slave
+    shell:
+      - tools push paugamo/slave

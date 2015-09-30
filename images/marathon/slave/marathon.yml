@@ -4,9 +4,16 @@ debug:    true
 
 settings:
 
+  front-url:
+
   git:
     username:
-    password: 
+    password:
+
+  jenkins:
+    username:
+    token:
+    url:
 
 verbatim:
   cpus: 1.0

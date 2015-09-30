@@ -39,15 +39,12 @@ if __name__ == '__main__':
         #
         # - parse our ochopod hints
         # - enable CLI logging
+        # - grab redis
+        # - connect to it
         #
         env = os.environ
         hints = json.loads(env['ochopod'])
         ochopod.enable_cli_log(debug=hints['debug'] == 'true')
-
-        #
-        # - grab our redis IP
-        # - connect to it
-        #
         tokens = os.environ['redis'].split(':')
         client = redis.StrictRedis(host=tokens[0], port=int(tokens[1]), db=0)
 
@@ -59,14 +56,38 @@ if __name__ == '__main__':
         @web.route('/status/<path:path>', methods=['GET'])
         def _status(path):
 
+            #
+            # - force a json output if the Accept header matches 'application/json'
+            # - otherwise default to a text/plain response
+            #
+            raw = request.accept_mimetypes.best_match(['application/json']) is None
             payload = client.get(path)
             if payload is None:
                 return '', 404
 
-            return payload, 200, \
-                {
-                    'Content-Type': 'application/json; charset=utf-8'
-                }
+            if raw:
+
+                #
+                # - if 'application/json' was not requested simply dump the log as is
+                # - force the response code to be HTTP 412 upon failure and HTTP 200 otherwise
+                #
+                js = json.loads(payload)
+                code = 200 if js['ok'] else 412
+                return '\n'.join(js['log']), code, \
+                    {
+                        'Content-Type': 'text/plain; charset=utf-8'
+                    }
+
+            else:
+
+                #
+                # - if 'application/json' was requested always respond with a HTTP 200
+                # - the response body then contains our serialized JSON output
+                #
+                return payload, 200, \
+                    {
+                        'Content-Type': 'application/json; charset=utf-8'
+                    }
 
         @web.route('/svg/<path:path>', methods=['GET'])
         def _svg(path):
@@ -112,7 +133,7 @@ if __name__ == '__main__':
                 return '', 403
 
             #
-            # - compute the HMAC & compare (use our pod token as the key)
+            # - compute the HMAC and compare (use our pod token as the key)
             # - fail on a 403 if mismatch
             #
             local = 'sha1=' + hmac.new(env['token'], request.data, hashlib.sha1).hexdigest()
