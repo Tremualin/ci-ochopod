@@ -140,7 +140,12 @@ if __name__ == '__main__':
             if local != request.headers['X-Hub-Signature']:
                 return '', 403
 
-            client.rpush('queue', request.data)
+            #
+            # -
+            #
+            slaves = int(os.environ['slaves'])
+            qid = hash(request.data) % slaves
+            client.rpush('queue-%d' % qid, request.data)
             return '', 200
 
         #

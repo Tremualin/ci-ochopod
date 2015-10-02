@@ -19,18 +19,14 @@ import logging
 import ochopod
 import os
 import redis
-import requests
-import tempfile
 import shutil
 import sys
+import time
 import yaml
 
-from fnmatch import fnmatch
 from ochopod.core.utils import shell
 from ochopod.core.fsm import diagnostic
 from os import path
-from requests.auth import HTTPBasicAuth
-from time import time
 from yaml import YAMLError
 
 
@@ -59,40 +55,68 @@ if __name__ == '__main__':
         # -
         #
         git = settings['git']
-        jenkins = settings['jenkins']
-
         while 1:
-            _, payload = client.blpop('queue')
+            _, payload = client.blpop('queue-%d' % int(env['index']))
             try:
-                log = []
-                now = time()
+                started = time.time()
                 js = json.loads(payload)
+
+                #
+                # -
+                #
                 branch = js['ref'].split('/')[-1]
+                if branch != 'master':
+                    continue
+
+                ok = 1
                 cfg = js['repository']
                 tag = cfg['full_name']
                 sha = js['after']
                 last = js['commits'][0]
-                summary = {'ok': 0, 'sha': sha, 'branch': branch}
+                safe = tag.replace('/', '-')
+                log = ['- commit %s (%s)' % (sha[0:10], last['message'])]
 
-                tmp = tempfile.mkdtemp()
+                tmp = path.join('/tmp', safe)
                 try:
 
                     try:
 
-                        #
-                        # -
-                        #
                         repo = path.join(tmp, cfg['name'])
-                        url = 'https://%s:%s@%s' % (git['username'], git['password'], cfg['git_url'][6:])
-                        logger.info('building %s (%s) @ %s' % (tag, branch, sha[0:10]))
-                        code, _ = shell('git clone -b %s --single-branch %s' % (branch, url), cwd=tmp)
-                        assert code == 0, 'unable to git clone %s (credentials issue ?)' % cfg['git_url']
+                        if not path.exists(repo):
+
+                            #
+                            # - the repo is not in our cache
+                            # - git clone it using the specified credentials
+                            #
+                            os.makedirs(tmp)
+                            logger.info('cloning %s' % tag)
+                            url = 'https://%s:%s@%s' % (git['username'], git['password'], cfg['git_url'][6:])
+                            shell('git clone -b master --single-branch %s' % url, cwd=tmp)
+
+                        else:
+
+                            #
+                            # - the repo is already in there
+                            # - git pull
+                            #
+                            shell('git pull', cwd=repo)
+
 
                         #
-                        # -
+                        # - checkout the specified commit hash
                         #
-                        local = \
+                        logger.info('checkout @ %s' % sha[0:10])
+                        code, _ = shell('git checkout %s' % sha, cwd=repo)
+                        assert code == 0, 'unable to checkout %s (wrong credentials and/or git issue ?)' % sha[0:10]
+
+                        #
+                        # - prep a little list of env. variable to pass down to the shell
+                        #   snippets we'll run
+                        #
+                        var = \
                             {
+                                'QUERY_URL': 'http://10.50.85.97:5000/status/%s' % tag,
+                                'PRESETS': json.dumps(settings['presets']),
                                 'HOST': env['HOST'],
                                 'COMMIT': sha,
                                 'COMMIT_SHORT': sha[0:10],
@@ -104,33 +128,57 @@ if __name__ == '__main__':
                         #
                         # - go look for integration.yml
                         # - if not found abort
-                        # - otherwise loop and execute each shell snippet in order
                         #
                         with open(path.join(repo, 'integration.yml'), 'r') as f:
                             yml = yaml.load(f)
-                                                            
-                            for regex in yml:
-                                if fnmatch(branch, regex):
 
-                                    #
-                                    # -
-                                    #
-                                    js = yml[regex] if isinstance(yml[regex], list) else [yml[regex]]
-                                    for blk in js:
-                                        log += ['- %s' % blk['step']]
-                                        debug = blk['debug'] if 'debug' in blk else 0
-                                        cwd = path.join(repo, blk['cwd']) if 'cwd' in blk else repo
-                                        for snippet in blk['shell']:
-                                            logger.debug('running %s' % snippet)
-                                            code, lines = shell(snippet, cwd=cwd, env=local)
-                                            status = 'passed' if not code else 'failed'
-                                            log += ['[%s] %s' % (status, snippet)]
-                                            if debug:
-                                                log += ['[%s]   . %s' % (status, line) for line in lines]
-                                            assert code == 0, 'failed to run "%s"' % snippet
+                            #
+                            # - the yaml can either be an array or a dict
+                            # - force it to an array for convenience
+                            # - otherwise loop and execute each shell snippet in order
+                            #
+                            js = yml if isinstance(yml, list) else [yml]
+                            for blk in js:
+                                log += ['- %s' % blk['step']]
+                                debug = blk['debug'] if 'debug' in blk else 0
+                                cwd = path.join(repo, blk['cwd']) if 'cwd' in blk else repo
+                                for snippet in blk['shell']:
 
-                            summary['ok'] = 1
-                                                                    
+                                    tick = time.time()
+                                    tokens = snippet.split(' ')
+                                    always = tokens[0] == 'no-skip'
+                                    if always or ok:
+
+                                        #
+                                        # -
+                                        #
+                                        if always:
+                                            snippet = ' '.join(tokens[1:])
+
+                                        #
+                                        # -
+                                        #
+                                        local = {'LOG': '\n'.join(log)}
+                                        if ok:
+                                            local['OK'] = 'true'
+
+                                        local.update(var)
+                                        logger.debug('running %s' % snippet)
+                                        code, lines = shell(snippet, cwd=cwd, env=local)
+                                        lapse = int(time.time() - tick)
+                                        status = 'passed' if not code else 'failed'
+                                        log += ['[%s] %s (%d seconds)' % (status, snippet, lapse)]
+                                        if debug:
+                                            log += ['[%s]   . %s' % (status, line) for line in lines]
+
+                                        #
+                                        # - switch the ok trigger off if the shell invocation failed
+                                        #
+                                        if code != 0:
+                                            ok = 0
+
+                                    else:
+                                        log += ['[skipped] %s' % snippet]
 
                     except AssertionError as failure:
 
@@ -154,48 +202,16 @@ if __name__ == '__main__':
                     # - make sure to cleanup our temporary directory
                     # - update redis with
                     #
-                    shutil.rmtree(tmp)
-                    seconds = int(time() - now)
-                    summary['log'] = log
-                    summary['seconds'] = seconds
+                    seconds = int(time.time() - started)
+                    summary = \
+                        {
+                            'ok': ok,
+                            'sha': sha,
+                            'log': log,
+                            'seconds': seconds
+                        }
                     client.set(tag, json.dumps(summary))
-                    logger.info('%s @ %s -> %d seconds' % (tag, sha[0:10], seconds))
-
-                    #
-                    # -
-                    #
-                    safe = tag.replace('/', '-')
-                    auth = HTTPBasicAuth(jenkins['username'], jenkins['token'])
-                    cb = '%s/status/%s' % (settings['front-url'], tag)
-                    script = \
-                        [
-                            '#!/bin/bash',
-                            'CODE=$(curl -H "Accept: text/plain" %s)' % cb,
-                            'if [[ $CODE -ne 200 ]] ; then',
-                            'exit 1',
-                            'fi'
-                        ]
-
-                    xml = \
-                        """
-                            <project>
-                                <actions/>
-                                <description>auto-generated CI project for repo %s</description>
-                                <builders>
-                                    <hudson.tasks.Shell>
-                                        <command>%s</command>
-                                    </hudson.tasks.Shell>
-                                </builders>
-                            </project>
-                        """
-
-                    requests.post(
-                        '%s/createItem?name=%s' % (jenkins['url'], safe),
-                        data=xml % (tag, '\n'.join(script)),
-                        headers={'Content-Type': 'application/xml'},
-                        auth=auth)
-
-                    requests.post('%s/job/%s/build' % (jenkins['url'], safe), auth=auth)
+                    logger.info('%s @ %s -> %s %d seconds' % (tag, sha[0:10], 'ok' if ok else 'ko', seconds))
 
             except Exception as failure:
 

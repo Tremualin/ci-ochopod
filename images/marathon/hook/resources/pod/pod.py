@@ -37,7 +37,7 @@ if __name__ == '__main__':
 
     class Model(Reactive):
 
-        depends_on = ['redis']
+        depends_on = ['redis', 'slave']
 
     class Strategy(Piped):
 
@@ -68,12 +68,17 @@ if __name__ == '__main__':
                     'uptime': '%.2f hours (pid %s)' % (lapse, pid)
                 }
 
+        def can_configure(self, cluster):
+
+            assert cluster.grep('redis', 6379), '1 redis required'
+
         def configure(self, cluster):
 
             return 'python hook.py', \
                    {
                        'token': token,
-                       'redis': cluster.grep('redis', 6379)
+                       'redis': cluster.grep('redis', 6379),
+                       'slaves': len(cluster.dependencies['slave'])
                    }
 
     Pod().boot(Strategy, model=Model)

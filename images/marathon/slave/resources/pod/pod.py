@@ -67,6 +67,10 @@ if __name__ == '__main__':
             # - it is bound to TCP 9001 (e.g any curl to localhost:9001 will talk to the docker API)
             # - run the slave
             #
-            return 'python slave.py', {'redis': cluster.grep('redis', 6379)}
+            return 'python slave.py', \
+                   {
+                       'index': cluster.index,
+                       'redis': cluster.grep('redis', 6379)
+                   }
 
     Pod().boot(Strategy, model=Model)

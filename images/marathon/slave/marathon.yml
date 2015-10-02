@@ -4,16 +4,19 @@ debug:    true
 
 settings:
 
-  front-url:
-
   git:
     username:
     password:
 
-  jenkins:
-    username:
-    token:
-    url:
+  presets:
+
+    jenkins:
+      username:
+      token:
+      front-url:
+
+    hipchat:
+      token:
 
 verbatim:
   cpus: 1.0
