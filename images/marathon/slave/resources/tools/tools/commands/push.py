@@ -55,7 +55,7 @@ def go():
             # - setup a temp directory
             # - use it to store a tar of the current folder
             #
-            now = time.time()
+            stated = time.time()
             tmp = tempfile.mkdtemp()
             try:
 
@@ -72,6 +72,7 @@ def go():
                     # - make sure to remove the intermediate containers
                     # - by design our container runs a socat on TCP 9001
                     #
+                    tick = time.time()
                     _, lines = shell(
                         'curl -H "Content-Type:application/octet-stream" '
                         '--data-binary @bundle.tgz '
@@ -82,7 +83,9 @@ def go():
                     #
                     # - the only way to test out for failure is to peek at the end of the docker output
                     #
+                    lapse = time.time() - tick
                     assert 'error' not in last, last['error']
+                    logger.debug('built tag %s in %d seconds', (tag, lapse))
 
                     #
                     # - cat our .dockercfg (which is mounted)
@@ -105,15 +108,20 @@ def go():
                                 'auth': ''
                             }
 
+                        tick = time.time()
                         auth = base64.b64encode(json.dumps(credentials))
                         shell(
                             'curl -X POST -H "X-Registry-Auth:%s" '
                             '"http://localhost:9001/images/%s/push?tag=%s"' % (auth, args.repo[0], tag))
+                        lapse = time.time() - tick
+                        logger.debug('pushed tag %s to %s in %d seconds' % (tag, host, lapse))
 
                     #
-                    # - remove the image we just built
+                    # - remove the image we just built if not latest
+                    # - this is done to avoid keeping around too many tagged images
                     #
-                    shell('curl -X DELETE "http://localhost:9001/images/%s:%s"' % (args.repo[0], tag))
+                    if tag != 'latest':
+                        shell('curl -X DELETE "http://localhost:9001/images/%s:%s"' % (args.repo[0], tag))
 
             finally:
 
@@ -122,8 +130,8 @@ def go():
                 #
                 shutil.rmtree(tmp)
 
-            lapse = int(time.time() - now)
-            logger.info('%s built and pushed to %s in %d seconds' % (args.repo[0], args.tags, lapse))
+            lapse = int(time.time() - stated)
+            logger.info('%s built and pushed in %d seconds' % (args.repo[0], lapse))
             return 0
 
     return _Tool()

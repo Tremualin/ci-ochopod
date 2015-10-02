@@ -1,5 +1,5 @@
 cluster:  servo
-image:    paugamo/test-servo
+image:    paugamo/servo
 debug:    true
 ports:
     - 22

@@ -19,7 +19,7 @@ import os
 import string
 import time
 
-from ochopod.bindings.ec2.marathon import Pod
+from ochopod.bindings.generic.marathon import Pod
 from ochopod.core.utils import shell
 from ochopod.models.piped import Actor as Piped
 from ochopod.models.reactive import Actor as Reactive
