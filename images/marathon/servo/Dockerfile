@@ -18,9 +18,9 @@ ADD resources/servo /opt/python/servo
 RUN cd /opt/python/servo && python setup.py install
 
 #
-# - install yaml
+# - install yaml and retrying
 #
-RUN pip install pyyaml
+RUN pip install pyyaml retrying
 
 #
 # - add our spiffy pod script

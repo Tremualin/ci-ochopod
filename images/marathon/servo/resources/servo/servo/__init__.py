@@ -27,7 +27,7 @@ from os.path import basename, expanduser, isfile
 
 
 @contextmanager
-def servo(strict=True, verbose=True):
+def servo(strict=True, verbose=False):
     try:
 
         #
@@ -51,50 +51,14 @@ def servo(strict=True, verbose=True):
             snippet = 'curl -X POST -H "X-Shell:%s" %s %s/shell' % (line, ' '.join(files), portal)
             code, lines = shell(snippet)
             assert code is 0, 'is the portal @ %s down ?' % portal
-            if verbose:
-                print '"%s" -> %s' % (cmdline, portal)
             js = json.loads(lines[0])
-            assert not strict or js['ok'], '"%s" failed' % cmdline
-            return json.loads(js['out']) if js['ok'] else None
-
-        def _run_test_container(image, settings):
-
-            #
-            # - fetch the $CALLBACK variable set by the flask endpoint
-            # - this URL can be passed down to a fresh pod for later acknowledgement
-            #
-            url = os.environ['CALLBACK']
-            with open('test.yml', 'w') as f:
-
-                settings['callback'] = url
-                cfg = \
-                    {
-                        'cluster':  'servo',
-                        'image':    image,
-                        'settings': settings
-                    }
-
-                f.write(yaml.dump(cfg))
-
-            js = _proxy('deploy -n testing test.yml')
-            index = int(js['test.yml']['up'][0])
+            ok = js['ok']
             if verbose:
-                print 'launched testing pod #%d' % index
+                print '[%s] "%s"' % ('passed' if ok else 'failed', cmdline)
+            assert not strict or ok, '"%s" failed' % cmdline
+            return json.loads(js['out']) if ok else None
 
-            try:
-
-                #
-                # - HTTP GET on our callback url
-                # - this will block (and possibly timeout)
-                # - return whatever was passed as raw text
-                #
-                return requests.get(url).text
-
-            finally:
-
-                _proxy('kill testing.servo -i %d' % index)
-
-        yield _proxy, _run_test_container
+        yield _proxy
 
         #
         # - all clear, return 0 to signal a success

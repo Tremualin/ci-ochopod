@@ -85,7 +85,7 @@ def go():
                     #
                     lapse = time.time() - tick
                     assert 'error' not in last, last['error']
-                    logger.debug('built tag %s in %d seconds', (tag, lapse))
+                    logger.debug('built tag %s in %d seconds' % (tag, lapse))
 
                     #
                     # - cat our .dockercfg (which is mounted)
@@ -121,7 +121,18 @@ def go():
                     # - this is done to avoid keeping around too many tagged images
                     #
                     if tag != 'latest':
-                        shell('curl -X DELETE "http://localhost:9001/images/%s:%s"' % (args.repo[0], tag))
+                        shell('curl -X DELETE "http://localhost:9001/images/%s:%s?force=true"' % (args.repo[0], tag))
+
+                #
+                # - clean up and remove any untagged image
+                # - this is important otherwise the number of images will slowly creep up
+                #
+                _, lines = shell('curl "http://localhost:9001/images/json?all=0"')
+                js = json.loads(lines[0])
+                victims = [item['Id'] for item in js if item['RepoTags'] == ['<none>:<none>']]
+                for victim in victims:
+                    logger.debug('removing untagged image %s' % victim)
+                    shell('curl -X DELETE "http://localhost:9001/images/%s?force=true"' % victim)
 
             finally:
 

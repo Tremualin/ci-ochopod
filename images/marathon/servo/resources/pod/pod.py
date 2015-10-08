@@ -32,7 +32,7 @@ if __name__ == '__main__':
 
     #
     # - generate a random 32 characters token (valid for the lifetime of the pod)
-    # - use it as the jenkins user's password
+    # - use it as the jenkins user's password and the HMAC key for the signature check
     #
     alphabet = string.letters + string.digits + '+/'
     token = ''.join(alphabet[ord(c) % len(alphabet)] for c in os.urandom(32))
@@ -80,7 +80,6 @@ if __name__ == '__main__':
 
             #
             # - get our pod details
-            # - we'll use that to get our local IP/port (used to callback)
             #
             pod = cluster.pods[cluster.key]
 
@@ -93,14 +92,13 @@ if __name__ == '__main__':
                 f.write(cluster.grep('portal', 9000))
 
             #
-            # - note we use supervisor to socat the unix socket used by the underlying docker daemon
-            # - it is bound to TCP 9001 (e.g any curl to localhost:9001 will talk to the docker API)
-            # - run the slave
+            # - pass the token and our local IP:port connection string (used for the callback
+            #   mechanism)
             #
             return 'python hook.py', \
                    {
                        'token': token,
-                       'local': '%s:%d' % (pod['ip'],pod['ports']['10000'])
+                       'local': '%s:%d' % (pod['ip'], pod['ports']['5000'])
                    }
 
     Pod().boot(Strategy, model=Model)

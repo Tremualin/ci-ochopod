@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import hashlib
+import hmac
 import json
 import logging
 import ochopod
@@ -28,7 +30,6 @@ from flask import Flask, request
 from ochopod.core.fsm import diagnostic
 from ochopod.core.utils import shell
 from os import path
-from pykka import ThreadingFuture, Timeout
 
 logger = logging.getLogger('ochopod')
 
@@ -48,43 +49,30 @@ if __name__ == '__main__':
         hints = json.loads(env['ochopod'])
         ochopod.enable_cli_log(debug=hints['debug'] == 'true')
 
-        @web.route('/callback/<id>', methods=['POST'])
-        def _set_callback(id):
+        @web.route('/callback/<token>', methods=['POST'])
+        @web.route('/callback/<token>/<tag>', methods=['POST'])
+        def _set_callback(token, tag='callback.raw'):
 
-            if id not in blocked:
+            if token not in blocked:
                 return '', 404
 
-            blocked[id].set(request.data)
+            #
+            # - dump the incoming payload under the temp directory
+            # - use the specified filename
+            #
+            with open(path.join(blocked[token], tag), 'w') as f:
+                f.write(request.data)
+
             return '', 200
-
-        @web.route('/callback/<id>', methods=['GET'])
-        def _wait_for_callback(id):
-
-            assert not id in blocked
-            latch = ThreadingFuture()
-            blocked[id] = latch
-            try:
-
-                logger.info('blocking on %s' % id)
-                return latch.get(60.0), 200
-
-            except Timeout:
-
-                return '', 404
-
-            finally:
-
-                del blocked[id]
 
         @web.route('/run/<script>', methods=['POST'])
         def _from_curl(script):
 
             #
-            # - retrieve the X-Token header
-            # - check against our random token
+            # - retrieve the X-Signature header
             # - fast-fail on a HTTP 403 if not there or if there is a mismatch
             #
-            if not 'X-Token' in request.headers or request.headers['X-Token'] != env['token']:
+            if not 'X-Signature' in request.headers:
                 return '', 403
 
             #
@@ -93,23 +81,15 @@ if __name__ == '__main__':
             #
             raw = request.accept_mimetypes.best_match(['application/json']) is None
 
-            js = \
-                {
-                    'ok': 0,
-                    'log': ['running %s...' % script]
-                }
-
+            #
+            # -
+            #
+            ok = 0
+            log = ['executing %s' % script]
+            alphabet = string.letters + string.digits
+            token = ''.join(alphabet[ord(c) % len(alphabet)] for c in os.urandom(8))
             tmp = tempfile.mkdtemp()
             try:
-
-                #
-                # - download the archive
-                # - extract it into its own folder
-                #
-                upload = request.files['tgz']
-                upload.save(path.join(tmp, 'upload.tgz'))
-                code, _ = shell('mkdir uploaded && tar zxf upload.tgz -C uploaded', cwd=tmp)
-                assert code == 0, 'unable to open the archive (bogus payload ?)'
 
                 #
                 # - any request header in the form X-Var-* will be kept around and passed as
@@ -117,46 +97,75 @@ if __name__ == '__main__':
                 # - make sure the variable is spelled in uppercase
                 #
                 local = {key[6:].upper(): value for key, value in request.headers.items() if key.startswith('X-Var-')}
-                for key, value in local:
-                    js['log'] += '$%s = %s' % (key, value)
 
                 #
                 # - craft a unique callback URL that points to this pod
                 # - this will be passed down to the script to enable transient testing jobs
                 #
-                alphabet = string.letters + string.digits
-                token = ''.join(alphabet[ord(c) % len(alphabet)] for c in os.urandom(8))
+                cwd = path.join(tmp, 'uploaded')
                 local['CALLBACK'] = 'http://%s/callback/%s' % (env['local'], token)
+                blocked[token] = cwd
+                for key, value in local.items():
+                    log += ['$%s = %s' % (key, value)]
 
                 #
+                # - download the archive
+                # - compute the HMAC and compare (use our pod token as the key)
+                # - fail on a 403 if mismatch
+                #
+                where = path.join(tmp, 'bundle.tgz')
+                request.files['tgz'].save(where)
+                with open(where, 'rb') as f:
+                    raw = f.read()
+                    digest = 'sha1=' + hmac.new(env['token'], raw, hashlib.sha1).hexdigest()
+                    if digest != request.headers['X-Signature']:
+                        return '', 403
+
+                #
+                # - extract it into its own folder
                 # - make sure the requested script is there
                 #
-                cwd = path.join(tmp, 'uploaded')
-                code, _ = shell('ls %s' % script, cwd=cwd)
-                assert code == 0, 'unable to find %s (check your scripts)' % script
+                code, _ = shell('mkdir uploaded && tar zxf bundle.tgz -C uploaded', cwd=tmp)
+                assert code == 0, 'unable to open the archive (bogus payload ?)'
+                assert path.exists(path.join(cwd, script)), 'unable to find %s (check your scripts)' % script
+
+                #
+                # - decrypt any file whose extension is .aes
+                # - just run openssl directly and dump the output in the working directory
+                # - note: at this point we just look for .aes file in the top level directory
+                #
+                for file in os.listdir(cwd):
+                    bare, ext = path.splitext(file)
+                    if ext != '.aes':
+                        continue
+
+                    code, _ = shell('openssl enc -d -base64 -aes-256-cbc -k %s -in %s -out %s' % (env['token'], file, bare), cwd=cwd)
+                    if code == 0:
+                        log += ['decrypted %s' % file]
 
                 #
                 # - run it
                 # - keep the script output as a json array
                 #
                 now = time.time()
-                code, lines = shell('python %s' % script, cwd=cwd, env=local)
-                js['ok'] = code == 0
-                js['log'] += lines + ['script run in %d seconds' % int(time.time() - now)]
+                code, lines = shell('python %s 2>&1' % script, cwd=cwd, env=local)
+                log += lines + ['script run in %d seconds (exit code %d)' % (int(time.time() - now), code)]
+                ok = code == 0
 
             except AssertionError as failure:
 
-                js['log'] += ['failure (%s)' % failure]
+                log += ['failure (%s)' % failure]
 
             except Exception as failure:
 
-                js['log'] += ['unexpected failure (%s)' % diagnostic(failure)]
+                log += ['unexpected failure (%s)' % diagnostic(failure)]
 
             finally:
 
                 #
                 # - make sure to cleanup our temporary directory
                 #
+                del blocked[token]
                 shutil.rmtree(tmp)
 
             if raw:
@@ -165,8 +174,8 @@ if __name__ == '__main__':
                 # - if 'application/json' was not requested simply dump the log as is
                 # - force the response code to be HTTP 412 upon failure and HTTP 200 otherwise
                 #
-                code = 200 if js['ok'] else 412
-                return '\n'.join(js['log']), code, \
+                code = 200 if ok else 412
+                return '\n'.join(log), code, \
                     {
                         'Content-Type': 'text/plain; charset=utf-8'
                     }
@@ -177,15 +186,21 @@ if __name__ == '__main__':
                 # - if 'application/json' was requested always respond with a HTTP 200
                 # - the response body then contains our serialized JSON output
                 #
+                js = \
+                    {
+                        'ok': ok,
+                        'log': log
+                    }
+
                 return json.dumps(js), 200, \
                     {
                         'Content-Type': 'application/json; charset=utf-8'
                     }
 
         #
-        # - run our flask endpoint on TCP 10000
+        # - run our flask endpoint on TCP 5000
         #
-        web.run(host='0.0.0.0', port=10000, threaded=True)
+        web.run(host='0.0.0.0', port=5000, threaded=True)
 
     except Exception as failure:
 

@@ -136,12 +136,13 @@ if __name__ == '__main__':
             # - compute the HMAC and compare (use our pod token as the key)
             # - fail on a 403 if mismatch
             #
-            local = 'sha1=' + hmac.new(env['token'], request.data, hashlib.sha1).hexdigest()
-            if local != request.headers['X-Hub-Signature']:
+            digest = 'sha1=' + hmac.new(env['token'], request.data, hashlib.sha1).hexdigest()
+            if digest != request.headers['X-Hub-Signature']:
                 return '', 403
 
             #
-            # -
+            # - hash the data from git to send it to a specific queue
+            # - we do this to splay out the traffic amongst our slaves while retaining stickiness
             #
             slaves = int(os.environ['slaves'])
             qid = hash(request.data) % slaves
