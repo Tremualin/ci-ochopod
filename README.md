@@ -1,4 +1,28 @@
-## Git web-hook + build farm over Mesos/Ochopod
+## Simple Travis-like CI/CD backend for Ochopod
+
+### Overview
+
+This repo is a small set of [**Ochopod**](https://github.com/autodesk-cloud/ochopod) images forming together a simple,
+no-nonsense CI/CD backend which can be easily integrated with Git. The CI part uses Redis as a small queue propagating
+HTTP POST requests from Git hooks into a pool of build slaves. The slaves piggy-back on their host Docker daemon to
+build or push images while keeping repositories and their artifacts cached. Builds happen upon a git push and can be
+customized using a simple [**Travis**](https://travis-ci.org) like description file.
+
+The CD part meshes with the [**Ochothon**](https://github.com/autodesk-cloud/ochothon) portal to provide secure proxies
+able to execute complex deployment procedures on behalf of tools like Jenkins.
+
+### Documentation
+
+Our [**Sphinx**](http://sphinx-doc.org/) documentation can be found under docs/. Just go in there and build for your
+favorite target, for instance:
+
+```
+$ cd docs
+$ make html
+```
+
+The docs will be written to _docs/_build/html_. This is all Sphinx based and you have many options and knobs to
+tweak.
 
 ### Support
 
