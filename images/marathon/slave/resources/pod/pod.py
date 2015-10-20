@@ -14,9 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import json
 import logging
+import os
 import time
 
+from jinja2 import Environment, FileSystemLoader
 from ochopod.bindings.generic.marathon import Pod
 from ochopod.models.piped import Actor as Piped
 from ochopod.models.reactive import Actor as Reactive
@@ -54,13 +57,29 @@ if __name__ == '__main__':
 
             lapse = (now - self.since) / 3600.0
 
-            return { 'uptime': '%.2f hours (pid %s)' % (lapse, pid) }
+            return {'uptime': '%.2f hours (pid %s)' % (lapse, pid)}
 
         def can_configure(self, cluster):
 
             assert len(cluster.dependencies['redis']) == 1, 'need 1 redis'
 
         def configure(self, cluster):
+
+            #
+            # - render ~/.netrc which will set our git credentials
+            #
+            settings = json.loads(os.environ['pod'])
+            env = Environment(loader=FileSystemLoader('/opt/slave/pod/templates'))
+            template = env.get_template('netrc')
+            git = settings['git']
+            mappings = \
+                {
+                    'login':    git['username'],
+                    'password': git['password']
+                }
+
+            with open('/root/.netrc', 'w') as f:
+                f.write(template.render(mappings))
 
             #
             # - note we use supervisor to socat the unix socket used by the underlying docker daemon

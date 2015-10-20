@@ -19,7 +19,6 @@ import logging
 import ochopod
 import os
 import redis
-import shutil
 import sys
 import time
 import yaml
@@ -50,12 +49,11 @@ if __name__ == '__main__':
         settings = json.loads(env['pod'])
         tokens = os.environ['redis'].split(':')
         client = redis.StrictRedis(host=tokens[0], port=int(tokens[1]), db=0)
-
-        #
-        # -
-        #
-        git = settings['git']
         while 1:
+
+            #
+            # -
+            #
             _, payload = client.blpop('queue-%d' % int(env['index']))
             try:
                 started = time.time()
@@ -75,7 +73,6 @@ if __name__ == '__main__':
                 last = js['commits'][0]
                 safe = tag.replace('/', '-')
                 log = ['- commit %s (%s)' % (sha[0:10], last['message'])]
-
                 tmp = path.join('/tmp', safe)
                 try:
 
@@ -86,13 +83,13 @@ if __name__ == '__main__':
 
                             #
                             # - the repo is not in our cache
-                            # - git clone it using the specified credentials
+                            # - git clone it
                             #
                             os.makedirs(tmp)
                             logger.info('cloning %s' % tag)
-                            url = 'https://%s:%s@%s' % (git['username'], git['password'], cfg['git_url'][6:])
-                            shell('git clone -b master --single-branch %s' % url, cwd=tmp)
-
+                            url = 'https://%s' % cfg['git_url'][6:]
+                            code, _ = shell('git clone -b master --single-branch %s' % url, cwd=tmp)
+                            assert code == 0, 'unable to clone %s' % url
                         else:
 
                             #
@@ -167,7 +164,8 @@ if __name__ == '__main__':
                                         code, lines = shell(snippet, cwd=cwd, env=local)
                                         lapse = int(time.time() - tick)
                                         status = 'passed' if not code else 'failed'
-                                        log += ['[%s] %s (%d seconds)' % (status, snippet, lapse)]
+                                        capped = snippet if len(snippet) < 32 else '%s...' % snippet[:64]
+                                        log += ['[%s] %s (%d seconds)' % (status, capped.replace('\n', ' '), lapse)]
                                         if debug:
                                             log += ['[%s]   . %s' % (status, line) for line in lines]
 
@@ -182,18 +180,22 @@ if __name__ == '__main__':
 
                     except AssertionError as failure:
 
+                        ok = 0
                         log += ['* %s' % str(failure)]
 
                     except IOError:
 
+                        ok = 0
                         log += ['* unable to load integration.yml (missing from the repo ?)']
 
                     except YAMLError as failure:
 
+                        ok = 0
                         log += ['* invalid YAML syntax']
 
                     except Exception as failure:
 
+                        ok = 0
                         log += ['* unexpected condition -> %s' % diagnostic(failure)]
 
                 finally:

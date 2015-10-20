@@ -49,6 +49,7 @@ def go():
             #
             presets = json.loads(os.environ['PRESETS'])
             blk = presets['jenkins']
+            master = blk['master']
             user = blk['username'] if not args.user else args.user
             token = blk['token'] if not args.token else args.token
 
@@ -84,12 +85,12 @@ def go():
                 """
 
             requests.post(
-                'http://jenkins.cloud.autodesk.com/%s/createItem?name=%s' % ('/'.join(path[:-2]), tag),
+                '%s/%s/createItem?name=%s' % (master,'/'.join(path[:-2]), tag),
                 data=xml % (tag, '\n'.join(script)),
                 headers={'Content-Type': 'application/xml'},
                 auth=auth)
 
-            reply = requests.post('http://jenkins.cloud.autodesk.com/%s/build' % args.path[0], auth=auth)
+            reply = requests.post('%s/%s/build' % (master, args.path[0]), auth=auth)
 
             assert reply.status_code < 300, 'failed to trigger a jenkins build (HTTP %d)' % reply.status_code
             return 0

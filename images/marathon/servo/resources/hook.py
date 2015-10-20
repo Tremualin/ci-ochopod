@@ -61,6 +61,7 @@ if __name__ == '__main__':
             # - use the specified filename
             #
             with open(path.join(blocked[token], tag), 'w') as f:
+                logger.info('callback received for %s (%d B)' % (token, len(request.data)))
                 f.write(request.data)
 
             return '', 200
@@ -78,16 +79,13 @@ if __name__ == '__main__':
             #
             # - force a json output if the Accept header matches 'application/json'
             # - otherwise default to a text/plain response
-            #
-            raw = request.accept_mimetypes.best_match(['application/json']) is None
-
-            #
-            # -
+            # - create a temporary directory to run from
             #
             ok = 0
             log = ['executing %s' % script]
             alphabet = string.letters + string.digits
             token = ''.join(alphabet[ord(c) % len(alphabet)] for c in os.urandom(8))
+            raw = request.accept_mimetypes.best_match(['application/json']) is None
             tmp = tempfile.mkdtemp()
             try:
 
