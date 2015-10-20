@@ -9,14 +9,14 @@ This project is a simple CI/CD backend built on top of the Ochopod_ mini-PaaS. I
 straight from Git_ using a flow similar to Travis_.
 
 The backend itself is made of multiple Docker_ container running Ochopod_ and living into a Mesos_ cluster. It is
-articulated around a *hook* container that acts as a Git_ web-hook sink and forwards the corresponding payload to
+articulated around a *hook* container that acts as a Git_ web-hook receiver and forwards the commit payload to
 a *redis* queue. A set of *slave* containers will pick those notifications, clone or update the code and execute a
-bunch of shell commands defined in the repository itself.
+bunch of shell commands defined in the repository itself. Usual integration steps such as unit-testing, compilation,
+packaging, docker push and so on can thus be all nicely folded into the repository itself.
 
-Being built on top of Ochopod_ and Mesos_ the backend can easily scale up and support upgrades. The main motivation
-behind this architecture is to simplify what our developers have to do to go from a Git_ repository to a
-full-blown Docker_ image. Usual integration steps such as unit-testing, compilation, packaging, docker push and so
-on can all be nicely folded into the repository itself.
+.. figure:: png/ci-overall.png
+   :align: center
+   :width: 100%
 
 .. warning::
     This project is *not* a replacement for CI tools such as Jenkins_ but rather a specialized companion service.
