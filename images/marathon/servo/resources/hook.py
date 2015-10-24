@@ -66,8 +66,8 @@ if __name__ == '__main__':
 
             return '', 200
 
-        @web.route('/run/<script>', methods=['POST'])
-        def _from_curl(script):
+        @web.route('/run/<scripts>', methods=['POST'])
+        def _from_curl(scripts):
 
             #
             # - retrieve the X-Signature header
@@ -77,12 +77,16 @@ if __name__ == '__main__':
                 return '', 403
 
             #
+            # - split the last URI token in case multiple scripts are specified
+            #
+
+            #
             # - force a json output if the Accept header matches 'application/json'
             # - otherwise default to a text/plain response
             # - create a temporary directory to run from
             #
             ok = 0
-            log = ['executing %s' % script]
+            log = []
             alphabet = string.letters + string.digits
             token = ''.join(alphabet[ord(c) % len(alphabet)] for c in os.urandom(8))
             raw = request.accept_mimetypes.best_match(['application/json']) is None
@@ -114,8 +118,8 @@ if __name__ == '__main__':
                 where = path.join(tmp, 'bundle.tgz')
                 request.files['tgz'].save(where)
                 with open(where, 'rb') as f:
-                    raw = f.read()
-                    digest = 'sha1=' + hmac.new(env['token'], raw, hashlib.sha1).hexdigest()
+                    bytes = f.read()
+                    digest = 'sha1=' + hmac.new(env['token'], bytes, hashlib.sha1).hexdigest()
                     if digest != request.headers['X-Signature']:
                         return '', 403
 
@@ -125,7 +129,6 @@ if __name__ == '__main__':
                 #
                 code, _ = shell('mkdir uploaded && tar zxf bundle.tgz -C uploaded', cwd=tmp)
                 assert code == 0, 'unable to open the archive (bogus payload ?)'
-                assert path.exists(path.join(cwd, script)), 'unable to find %s (check your scripts)' % script
 
                 #
                 # - decrypt any file whose extension is .aes
@@ -142,13 +145,18 @@ if __name__ == '__main__':
                         log += ['decrypted %s' % file]
 
                 #
-                # - run it
+                # - run each script in order
+                # - abort immediately if the script exit code is not zero
                 # - keep the script output as a json array
                 #
-                now = time.time()
-                code, lines = shell('python %s 2>&1' % script, cwd=cwd, env=local)
-                log += lines + ['script run in %d seconds (exit code %d)' % (int(time.time() - now), code)]
-                ok = code == 0
+                for script in scripts.split('+'):
+                    now = time.time()
+                    assert path.exists(path.join(cwd, script)), 'unable to find %s (check your scripts)' % script
+                    code, lines = shell('python %s 2>&1' % script, cwd=cwd, env=local)
+                    log += lines + ['%s ran in %d seconds' % (script, int(time.time() - now))]
+                    assert code == 0, '%s failed on exit code %d' % (script, code)
+
+                ok = 1
 
             except AssertionError as failure:
 

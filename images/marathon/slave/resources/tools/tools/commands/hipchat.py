@@ -57,7 +57,8 @@ def go():
                 {
                     'message': ' '.join(args.message),
                     'message_format': 'text',
-                    'color': args.color
+                    'color': args.color,
+                    'from': 'CI backend'
                 }
 
             reply = requests.post(

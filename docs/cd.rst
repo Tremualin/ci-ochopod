@@ -41,17 +41,18 @@ In order to run your CD scripts you first need to bundle them in a TGZ archive. 
 *servo* via a HTTP POST. A mandatory signature must be provided as well: the SHA1 hash of the archive has to be
 passed via the *X-Signature* header. Please note the *servo* secret token must be used as the hash key.
 
-The HTTP POST is performed as /run/*script* where *script* is the name of a Python_ script that must be included
-in the uploaded archive.
+The HTTP POST is performed as /run/*scripts* where *scripts* is a string formed by concatenating together the name
+of the Python_ modules that must be executed (separate with a + character). Any module that is specified must be
+included in the uploaded archive.
 
-For instance you could upload and run the a CD script called *deploy.py* this way:
+For instance you could upload and run in order two CD scripts called *deploy.py* and *test.py* this way:
 
 .. code:: bash
 
     $ tar zcf upload.tgz *
     $ HASH=$(openssl dgst -sha1 -hmac $SERVO_TOKEN upload.tgz)
     $ HASH="sha1=${HASH##* }"
-    $ curl -X POST -F tgz=@upload.tgz -H -H "X-Signature:$HASH" http://10.120.11.80:5000/run/deploy.py
+    $ curl -X POST -F tgz=@upload.tgz -H -H "X-Signature:$HASH" http://10.120.11.80:5000/run/deploy.py+test.py
 
 .. note::
     You can include other files in the TGZ such as templates, YAML_ container definition files and so on.
