@@ -32,6 +32,8 @@ if __name__ == '__main__':
 
     class Model(Reactive):
 
+        damper = 30.0
+
         depends_on = ['redis']
 
     class Strategy(Piped):
@@ -43,6 +45,8 @@ if __name__ == '__main__':
         pid = None
 
         since = 0.0
+
+        strict = True
 
         def sanity_check(self, pid):
 
@@ -84,6 +88,7 @@ if __name__ == '__main__':
             #
             # - note we use supervisor to socat the unix socket used by the underlying docker daemon
             # - it is bound to TCP 9001 (e.g any curl to localhost:9001 will talk to the docker API)
+            # - the index is unique amongst the slave cluster and used to shard builds on specific hosts
             # - run the slave
             #
             return 'python slave.py', \

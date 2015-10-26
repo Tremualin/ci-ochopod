@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import json
 import logging
 import os
 import string
@@ -31,9 +32,12 @@ if __name__ == '__main__':
     #
     # - generate a random 32 characters token (valid for the lifetime of the pod)
     # - use it to filter a bit who can POST to us
+    # - this token can also be defined when deploying the pod
     #
+    settings = json.loads(os.environ['pod'])
     alphabet = string.letters + string.digits + '+/'
-    token = ''.join(alphabet[ord(c) % len(alphabet)] for c in os.urandom(32))
+    randomized = ''.join(alphabet[ord(c) % len(alphabet)] for c in os.urandom(32))
+    token = settings['token'] if 'token' in settings else randomized
 
     class Model(Reactive):
 

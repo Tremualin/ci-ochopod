@@ -12,6 +12,5 @@ RUN pip install redis
 #
 ADD resources/pod /opt/hook/pod
 ADD resources/hook.py /opt/hook/
-ADD resources/templates /opt/hook/templates
 ADD resources/supervisor /etc/supervisor/conf.d
 CMD /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf

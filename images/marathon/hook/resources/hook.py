@@ -23,8 +23,7 @@ import os
 import redis
 import sys
 
-from datetime import datetime
-from flask import Flask, request, render_template
+from flask import Flask, request
 from ochopod.core.fsm import diagnostic
 
 logger = logging.getLogger('ochopod')
@@ -47,6 +46,7 @@ if __name__ == '__main__':
         ochopod.enable_cli_log(debug=hints['debug'] == 'true')
         tokens = os.environ['redis'].split(':')
         client = redis.StrictRedis(host=tokens[0], port=int(tokens[1]), db=0)
+        slaves = int(os.environ['slaves'])
 
         @web.route('/ping', methods=['GET'])
         def _ping():
@@ -56,12 +56,15 @@ if __name__ == '__main__':
         @web.route('/status/<path:path>', methods=['GET'])
         def _status(path):
 
+            branch = 'master'
+            key = '%s:%s' % (branch, path)
+
             #
             # - force a json output if the Accept header matches 'application/json'
             # - otherwise default to a text/plain response
             #
             raw = request.accept_mimetypes.best_match(['application/json']) is None
-            payload = client.get(path)
+            payload = client.get('status:%s' % key)
             if payload is None:
                 return '', 404
 
@@ -89,41 +92,14 @@ if __name__ == '__main__':
                         'Content-Type': 'application/json; charset=utf-8'
                     }
 
-        @web.route('/svg/<path:path>', methods=['GET'])
-        def _svg(path):
-
-            log = []
-            payload = client.get(path)
-            if payload is None:
-                tagline = 'repo not indexed (check your git hook)'
-
-            else:
-
-                #
-                # -
-                #
-                js = json.loads(payload)
-                tagline = 'integration %s (ran in %d seconds, commit %s)' % ('passed' if js['ok'] else 'failed', js['seconds'], js['sha'][0:10])
-
-                def _clip(line):
-                    chars = len(line)
-                    return line if chars <= 80 else line[0:77] + '...'
-
-                log = [_clip(line) for line in js['log']]
-
-            svg = render_template('status_80chars.svg', lines=1+len(log), tagline=tagline, log=enumerate(log))
-
-            return svg, 200, \
-                {
-                    'Content-Type': 'image/svg+xml',
-                    'Last-Modified': datetime.now(),
-                    'Cache-Control': 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0',
-                    'Expires': '-1',
-                    'Pragma': 'no-cache'
-                }
-
         @web.route('/', methods=['POST'])
-        def _post():
+        def _git_hook():
+
+            #
+            # - if we have no build slaves, fast-fail on a 304
+            #
+            if not slaves:
+                return '', 304
 
             #
             # - we want the hook to be signed
@@ -141,12 +117,65 @@ if __name__ == '__main__':
                 return '', 403
 
             #
+            # - ignore any push that is not done on master
+            # - fail in that case on a 304
+            #
+            js = json.loads(request.data)
+            branch = js['ref'].split('/')[-1]
+            if branch != 'master':
+                return '', 304
+
+            #
             # - hash the data from git to send it to a specific queue
             # - we do this to splay out the traffic amongst our slaves while retaining stickiness
             #
-            slaves = int(os.environ['slaves'])
-            qid = hash(request.data) % slaves
-            client.rpush('queue-%d' % qid, request.data)
+            cfg = js['repository']
+            path = cfg['full_name']
+            qid = hash(path) % slaves
+            key = '%s:%s' % (branch, path)
+            client.set('git:%s' % key, request.data)
+            logger.debug('updated git push data @ %s' % key)
+
+            build = \
+                {
+                    'key': key
+                }
+            client.rpush('queue-%d' % qid, build)
+            logger.debug('requested build @ %s' % key)
+            return '', 200
+
+        @web.route('/build/<path:path>', methods=['POST'])
+        def _build(path):
+
+            #
+            # - if we have no build slaves, fast-fail on a 304
+            #
+            if not slaves:
+                return '', 304
+
+            branch = 'master'
+            qid = hash(path) % slaves
+            key = '%s:%s' % (branch, path)
+
+            #
+            # - look the specified repository up
+            # - fail on a 404 if not found
+            #
+            payload = client.get('git:%s' % key)
+            if payload is None:
+                return '', 404
+
+            #
+            # - simply push they key to the appropriate queue
+            #
+            reset = 'X-Reset' in request.headers and request.headers['X-Reset'] == 'true'
+            build = \
+                {
+                    'key': key,
+                    'reset': reset
+                }
+            client.rpush('queue-%d' % qid, json.dumps(build))
+            logger.debug('requested build @ %s' % key)
             return '', 200
 
         #

@@ -19,6 +19,7 @@ import logging
 import ochopod
 import os
 import redis
+import shutil
 import sys
 import time
 import yaml
@@ -52,19 +53,14 @@ if __name__ == '__main__':
         while 1:
 
             #
-            # -
+            # - the key passed int the queue is made of the branch & repository tag
             #
-            _, payload = client.blpop('queue-%d' % int(env['index']))
+            _, js = client.blpop('queue-%d' % int(env['index']))
+            build = json.loads(js)
             try:
                 started = time.time()
+                payload = client.get('git:%s' % build['key'])
                 js = json.loads(payload)
-
-                #
-                # -
-                #
-                branch = js['ref'].split('/')[-1]
-                if branch != 'master':
-                    continue
 
                 ok = 1
                 cfg = js['repository']
@@ -77,6 +73,17 @@ if __name__ == '__main__':
                 try:
 
                     try:
+
+                        #
+                        # - if requested wipe out the directory first
+                        # - this will force a git clone
+                        #
+                        if 'reset' in build and build['reset']:
+                            try:
+                                shutil.rmtree(tmp)
+                                logger.info('wiped out %s' % tmp)
+                            except IOError:
+                                pass
 
                         repo = path.join(tmp, cfg['name'])
                         if not path.exists(repo):
@@ -97,7 +104,6 @@ if __name__ == '__main__':
                             # - git pull
                             #
                             shell('git pull', cwd=repo)
-
 
                         #
                         # - checkout the specified commit hash
@@ -160,11 +166,11 @@ if __name__ == '__main__':
                                             local['OK'] = 'true'
 
                                         local.update(var)
-                                        logger.debug('running %s' % snippet)
+                                        capped = snippet if len(snippet) < 32 else '%s...' % snippet[:64]
+                                        logger.debug('running %s' % capped)
                                         code, lines = shell(snippet, cwd=cwd, env=local)
                                         lapse = int(time.time() - tick)
                                         status = 'passed' if not code else 'failed'
-                                        capped = snippet if len(snippet) < 32 else '%s...' % snippet[:64]
                                         log += ['[%s] %s (%d seconds)' % (status, capped.replace('\n', ' '), lapse)]
                                         if debug:
                                             log += ['[%s]   . %s' % (status, line) for line in lines]
@@ -205,15 +211,16 @@ if __name__ == '__main__':
                     # - update redis with
                     #
                     seconds = int(time.time() - started)
-                    summary = \
+                    status = \
                         {
                             'ok': ok,
                             'sha': sha,
                             'log': log,
                             'seconds': seconds
                         }
-                    client.set(tag, json.dumps(summary))
+                    client.set('status:%s' % build['key'], json.dumps(status))
                     logger.info('%s @ %s -> %s %d seconds' % (tag, sha[0:10], 'ok' if ok else 'ko', seconds))
+                    logger.debug('%s @ %s ->\n %s' % (tag, sha[0:10], '\n '.join(log)))
 
             except Exception as failure:
 

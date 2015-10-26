@@ -1,8 +1,0 @@
-<svg width="1200" height="{{25+25*lines}}" xmlns="http://www.w3.org/2000/svg">
-  <text x="0" y="25" style="fill:black;" font-family="Verdana" font-size="20">{{tagline}}
-    {% for i, line in log %}
-        {% set y = 60 + 25 * i %}
-        <tspan x="0" y="{{y}}">{{line}}</tspan>
-    {% endfor %}
-  </text>
-</svg>
