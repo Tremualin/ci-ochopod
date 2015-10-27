@@ -21,6 +21,7 @@ import time
 
 from jinja2 import Environment, FileSystemLoader
 from ochopod.bindings.generic.marathon import Pod
+from ochopod.core.tools import Shell
 from ochopod.models.piped import Actor as Piped
 from ochopod.models.reactive import Actor as Reactive
 
@@ -97,4 +98,4 @@ if __name__ == '__main__':
                        'redis': cluster.grep('redis', 6379)
                    }
 
-    Pod().boot(Strategy, model=Model)
+    Pod().boot(Strategy, model=Model, tools=[Shell])

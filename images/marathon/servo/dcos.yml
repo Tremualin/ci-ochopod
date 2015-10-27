@@ -8,8 +8,6 @@ ports:
 verbatim:
   cpus: 1.0
   mem:  1024
-  uris:
-    - "file:///home/core/.dockercfg"
 
   acceptedResourceRoles:
     - slave_public

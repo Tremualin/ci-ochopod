@@ -38,15 +38,18 @@ if __name__ == '__main__':
         #
         # - parse our ochopod hints
         # - enable CLI logging
-        # - grab redis
-        # - connect to it
+        # - grab redis & connect to it
         #
-        env = os.environ
-        hints = json.loads(env['ochopod'])
+        hints = json.loads(os.environ['ochopod'])
         ochopod.enable_cli_log(debug=hints['debug'] == 'true')
         tokens = os.environ['redis'].split(':')
         client = redis.StrictRedis(host=tokens[0], port=int(tokens[1]), db=0)
-        slaves = int(os.environ['slaves'])
+
+        #
+        # - we got a tally of how many pods we have for each slave category
+        # - we'll use it to perform the module and shard the queues
+        #
+        slaves = json.loads(os.environ['slaves'])
 
         @web.route('/ping', methods=['GET'])
         def _ping():
@@ -92,8 +95,9 @@ if __name__ == '__main__':
                         'Content-Type': 'application/json; charset=utf-8'
                     }
 
-        @web.route('/', methods=['POST'])
-        def _git_hook():
+        @web.route('/', methods=['POST'], defaults={'capabilities': None})
+        @web.route('/<capabilities>', methods=['POST'])
+        def _git_hook(capabilities):
 
             #
             # - if we have no build slaves, fast-fail on a 304
@@ -112,7 +116,7 @@ if __name__ == '__main__':
             # - compute the HMAC and compare (use our pod token as the key)
             # - fail on a 403 if mismatch
             #
-            digest = 'sha1=' + hmac.new(env['token'], request.data, hashlib.sha1).hexdigest()
+            digest = 'sha1=' + hmac.new(os.environ['token'], request.data, hashlib.sha1).hexdigest()
             if digest != request.headers['X-Hub-Signature']:
                 return '', 403
 
@@ -126,22 +130,42 @@ if __name__ == '__main__':
                 return '', 304
 
             #
+            # - look at our slave dependencies
+            # - try to match the requested capabilities against what the various slaves offer
+            # - the slave clusters are named slave-[<token>]* where each token is a capability
+            #
+            modulo = None
+            caps = set(capabilities.split('+'))
+            for cluster in sorted(slaves.keys(), key=lambda item: (len(item), item)):
+                offered = set(cluster.split('-'))
+                if caps.issubset(offered):
+                    modulo = slaves[cluster]
+                    break
+
+            #
+            # - if we couldn't find a match abort on a 304
+            #
+            if not modulo:
+                return '', 304
+
+            #
             # - hash the data from git to send it to a specific queue
             # - we do this to splay out the traffic amongst our slaves while retaining stickiness
             #
             cfg = js['repository']
             path = cfg['full_name']
-            qid = hash(path) % slaves
+            qid = hash(path) % modulo
             key = '%s:%s' % (branch, path)
             client.set('git:%s' % key, request.data)
+            client.set('slave:%s' % key, cluster)
             logger.debug('updated git push data @ %s' % key)
 
             build = \
                 {
                     'key': key
                 }
-            client.rpush('queue-%d' % qid, build)
-            logger.debug('requested build @ %s' % key)
+            client.rpush('queue-%s-%d' % (cluster, qid), json.dumps(build))
+            logger.debug('requested build @ %s -> %s' % (key, cluster))
             return '', 200
 
         @web.route('/build/<path:path>', methods=['POST'])
@@ -154,7 +178,6 @@ if __name__ == '__main__':
                 return '', 304
 
             branch = 'master'
-            qid = hash(path) % slaves
             key = '%s:%s' % (branch, path)
 
             #
@@ -166,6 +189,17 @@ if __name__ == '__main__':
                 return '', 404
 
             #
+            # -
+            #
+            cluster = client.get('slave:%s' % key)
+            assert cluster is not None, 'slave:%s not found in redis (bug ?)' % key
+            if cluster not in slaves:
+                return '', 304
+
+            modulo = slaves[cluster]
+            qid = hash(path) % modulo
+
+            #
             # - simply push they key to the appropriate queue
             #
             reset = 'X-Reset' in request.headers and request.headers['X-Reset'] == 'true'
@@ -174,8 +208,9 @@ if __name__ == '__main__':
                     'key': key,
                     'reset': reset
                 }
-            client.rpush('queue-%d' % qid, json.dumps(build))
-            logger.debug('requested build @ %s' % key)
+
+            client.rpush('queue-%s-%d' % (cluster, qid), json.dumps(build))
+            logger.debug('requested build @ %s -> %s' % (key, cluster))
             return '', 200
 
         #

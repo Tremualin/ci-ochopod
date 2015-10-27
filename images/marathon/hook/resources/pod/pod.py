@@ -21,6 +21,7 @@ import string
 import time
 
 from ochopod.bindings.generic.marathon import Pod
+from ochopod.core.tools import Shell
 from ochopod.models.piped import Actor as Piped
 from ochopod.models.reactive import Actor as Reactive
 
@@ -41,7 +42,7 @@ if __name__ == '__main__':
 
     class Model(Reactive):
 
-        depends_on = ['redis', 'slave']
+        depends_on = ['redis', 'slave-*']
 
     class Strategy(Piped):
 
@@ -78,11 +79,20 @@ if __name__ == '__main__':
 
         def configure(self, cluster):
 
+            #
+            # - grab all the slave dependencies
+            # - count how many we have and group by type
+            #
+            pods = cluster.dependencies['slave-*']
+            unrolled = [js['cluster'] for _, js in pods.items()]
+            keys = set(unrolled)
+            tally = {key: unrolled.count(key) for key in keys}
+
             return 'python hook.py', \
                    {
                        'token': token,
                        'redis': cluster.grep('redis', 6379),
-                       'slaves': len(cluster.dependencies['slave'])
+                       'slaves': json.dumps(tally)
                    }
 
-    Pod().boot(Strategy, model=Model)
+    Pod().boot(Strategy, model=Model, tools=[Shell])

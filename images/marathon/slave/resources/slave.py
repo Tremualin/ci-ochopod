@@ -44,10 +44,9 @@ if __name__ == '__main__':
         # - grab redis
         # - connect to it
         #
-        env = os.environ
-        hints = json.loads(env['ochopod'])
+        hints = json.loads(os.environ['ochopod'])
         ochopod.enable_cli_log(debug=hints['debug'] == 'true')
-        settings = json.loads(env['pod'])
+        settings = json.loads(os.environ['pod'])
         tokens = os.environ['redis'].split(':')
         client = redis.StrictRedis(host=tokens[0], port=int(tokens[1]), db=0)
         while 1:
@@ -55,13 +54,18 @@ if __name__ == '__main__':
             #
             # - the key passed int the queue is made of the branch & repository tag
             #
-            _, js = client.blpop('queue-%d' % int(env['index']))
+            queue = 'queue-%s-%d' % (hints['cluster'], int(os.environ['index']))
+            logger.debug('waiting on %s...' % queue)
+            _, js = client.blpop(queue)
             build = json.loads(js)
             try:
                 started = time.time()
                 payload = client.get('git:%s' % build['key'])
                 js = json.loads(payload)
 
+                #
+                # -
+                #
                 ok = 1
                 cfg = js['repository']
                 tag = cfg['full_name']
@@ -120,7 +124,7 @@ if __name__ == '__main__':
                             {
                                 'QUERY_URL': 'http://10.50.85.97:5000/status/%s' % tag,
                                 'PRESETS': json.dumps(settings['presets']),
-                                'HOST': env['HOST'],
+                                'HOST': os.environ['HOST'],
                                 'COMMIT': sha,
                                 'COMMIT_SHORT': sha[0:10],
                                 'MESSAGE': last['message'],
