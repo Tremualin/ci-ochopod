@@ -1,5 +1,5 @@
 cluster:  slave
-image:    paugamo/slave
+image:    paugamo/slave-basic
 debug:    true
 
 settings:

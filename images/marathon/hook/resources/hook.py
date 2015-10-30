@@ -25,6 +25,7 @@ import sys
 
 from flask import Flask, request
 from ochopod.core.fsm import diagnostic
+from random import choice
 
 logger = logging.getLogger('ochopod')
 
@@ -124,28 +125,43 @@ if __name__ == '__main__':
             # - ignore any push that is not done on master
             # - fail in that case on a 304
             #
+            logger.debug('git payload -> %s' % request.data)
             js = json.loads(request.data)
             branch = js['ref'].split('/')[-1]
+            logger.debug(branch)
             if branch != 'master':
                 return '', 304
 
-            #
-            # - look at our slave dependencies
-            # - try to match the requested capabilities against what the various slaves offer
-            # - the slave clusters are named slave-[<token>]* where each token is a capability
-            #
-            modulo = None
-            caps = set(capabilities.split('+'))
-            for cluster in sorted(slaves.keys(), key=lambda item: (len(item), item)):
-                offered = set(cluster.split('-'))
-                if caps.issubset(offered):
-                    modulo = slaves[cluster]
-                    break
+            if capabilities is None:
+
+                #
+                # - no specific capability requested, just pick a slave cluster at random
+                #
+                cluster = choice(slaves.keys())
+
+            else:
+
+                #
+                # - look at our slave dependencies
+                # - try to match the requested capabilities against what the various slaves offer
+                # - the slave clusters are named slave-[<token>]* where each token is a capability
+                #
+                cluster = None
+                caps = set(capabilities.split('+'))
+                for tag in sorted(slaves.keys(), key=lambda item: (len(item), item)):
+                    offered = set(tag.split('-'))
+                    logger.debug(caps)
+                    logger.debug(offered)
+                    if caps.issubset(offered):
+                        cluster = tag
+                        break
 
             #
             # - if we couldn't find a match abort on a 304
+            # - otherwise use the # of slaves in that cluster as our modulo
             #
-            if not modulo:
+            logger.debug(cluster)
+            if not cluster:
                 return '', 304
 
             #
@@ -154,6 +170,7 @@ if __name__ == '__main__':
             #
             cfg = js['repository']
             path = cfg['full_name']
+            modulo = slaves[cluster]
             qid = hash(path) % modulo
             key = '%s:%s' % (branch, path)
             client.set('git:%s' % key, request.data)

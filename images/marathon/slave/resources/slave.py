@@ -64,9 +64,10 @@ if __name__ == '__main__':
                 js = json.loads(payload)
 
                 #
-                # -
+                # - extract the various core parameters from the git push json
                 #
                 ok = 1
+                complete = 0
                 cfg = js['repository']
                 tag = cfg['full_name']
                 sha = js['after']
@@ -157,30 +158,38 @@ if __name__ == '__main__':
                                     if always or ok:
 
                                         #
-                                        # -
+                                        # - if we used the 'no-skip' directive make sure we remove
+                                        #   it from the snippet
                                         #
                                         if always:
                                             snippet = ' '.join(tokens[1:])
 
                                         #
-                                        # -
+                                        # - set the $OK and $LOG variables
                                         #
                                         local = {'LOG': '\n'.join(log)}
                                         if ok:
                                             local['OK'] = 'true'
 
+                                        #
+                                        # - update the environment we'll pass to the shell
+                                        # - execute the snippet via a POpen()
+                                        #
                                         local.update(var)
                                         capped = snippet if len(snippet) < 32 else '%s...' % snippet[:64]
+                                        capped = capped.replace('\n', ' ')
                                         logger.debug('running %s' % capped)
                                         code, lines = shell(snippet, cwd=cwd, env=local)
                                         lapse = int(time.time() - tick)
                                         status = 'passed' if not code else 'failed'
-                                        log += ['[%s] %s (%d seconds)' % (status, capped.replace('\n', ' '), lapse)]
+                                        log += ['[%s] %s (%d seconds, exit code %d)' % (status, capped, lapse, code)]
                                         if debug:
                                             log += ['[%s]   . %s' % (status, line) for line in lines]
 
                                         #
                                         # - switch the ok trigger off if the shell invocation failed
+                                        # - all subsequent shell executions will then be ignored unless
+                                        #   the 'no-skip' directive is used
                                         #
                                         if code != 0:
                                             ok = 0
@@ -188,24 +197,25 @@ if __name__ == '__main__':
                                     else:
                                         log += ['[skipped] %s' % snippet]
 
+                        #
+                        # - we went through the whole thing
+                        #
+                        complete = 1
+
                     except AssertionError as failure:
 
-                        ok = 0
                         log += ['* %s' % str(failure)]
 
                     except IOError:
 
-                        ok = 0
                         log += ['* unable to load integration.yml (missing from the repo ?)']
 
                     except YAMLError as failure:
 
-                        ok = 0
                         log += ['* invalid YAML syntax']
 
                     except Exception as failure:
 
-                        ok = 0
                         log += ['* unexpected condition -> %s' % diagnostic(failure)]
 
                 finally:
@@ -217,7 +227,7 @@ if __name__ == '__main__':
                     seconds = int(time.time() - started)
                     status = \
                         {
-                            'ok': ok,
+                            'ok': ok and complete,
                             'sha': sha,
                             'log': log,
                             'seconds': seconds
