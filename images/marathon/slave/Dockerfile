@@ -4,7 +4,7 @@ FROM autodeskcloud/pod:1.0.7
 # - add socat, pyyaml & redis
 #
 RUN apt-get install -y socat
-RUN pip install redis pyyaml
+RUN pip install redis pyyaml docker-py
 
 #
 # - add our internal package containing our python tools

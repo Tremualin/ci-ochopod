@@ -23,10 +23,14 @@ import shutil
 
 from ochopod.core.utils import shell
 from tools.tool import Template
-from urlparse import urlparse
+from docker import Client
 
 #: Our ochopod logger.
 logger = logging.getLogger('ochopod')
+
+#: Docker client
+#  - by design our container runs a socat on TCP 9001
+docker = Client(base_url='http://localhost:9001')
 
 def go():
 
@@ -67,72 +71,44 @@ def go():
                 assert code == 0, 'failed to tar'
                 for tag in args.tags.split(','):
 
+                    image = '%s:%s' % (args.repo[0], tag)
+
                     #
                     # - send the archive over to the underlying docker daemon
                     # - make sure to remove the intermediate containers
-                    # - by design our container runs a socat on TCP 9001
                     #
                     tick = time.time()
-                    _, lines = shell(
-                        'curl -H "Content-Type:application/octet-stream" '
-                        '--data-binary @bundle.tgz '
-                        '"http://localhost:9001/build?forcerm=1\&t=%s:%s"' % (args.repo[0], tag), cwd=tmp)
-                    assert len(lines) > 1, 'empty docker output (failed to build or docker error ?)'
-                    last = json.loads(lines[-1])
-
-                    #
-                    # - the only way to test out for failure is to peek at the end of the docker output
-                    #
-                    lapse = time.time() - tick
-                    assert 'error' not in last, last['error']
-                    logger.debug('built tag %s in %d seconds' % (tag, lapse))
+                    built, output = docker.build(path='%s/bundle.tgz' % tmp, pull=True, forcerm=True, tag=image)
+                    assert built, 'empty docker output (failed to build or docker error ?)'
+                    logger.debug('built image %s in %d seconds' % (image, time.time() - tick))
 
                     #
                     # - cat our .dockercfg (which is mounted)
                     # - craft the authentication header required for the push
                     # - push the image using the specified tag
                     #
-                    _, lines = shell('cat /host/.docker/config.json')
-                    assert lines, 'was docker login run (no config.json found) ?'
-                    js = json.loads(' '.join(lines))
-                    assert 'auths' in js, 'invalid config.json setup (unsupported docker install ?)'
-                    for url, payload in js['auths'].items():
-                        tokens = base64.b64decode(payload['auth']).split(':')
-                        host = urlparse(url).hostname
-                        credentials = \
-                            {
-                                'serveraddress': host,
-                                'username': tokens[0],
-                                'password': tokens[1],
-                                'email': payload['email'],
-                                'auth': ''
-                            }
+                    auth = docker.login('autodeskcloud','/host/.docker/config.json')
 
-                        tick = time.time()
-                        auth = base64.b64encode(json.dumps(credentials))
-                        shell(
-                            'curl -X POST -H "X-Registry-Auth:%s" '
-                            '"http://localhost:9001/images/%s/push?tag=%s"' % (auth, args.repo[0], tag))
-                        lapse = time.time() - tick
-                        logger.debug('pushed tag %s to %s in %d seconds' % (tag, host, lapse))
+                    tick = time.time()
+                    docker.push(image)
+                    logger.debug('pushed image %s to %s in %d seconds' % (image, auth['serveraddress'], time.time() - tick))
 
                     #
                     # - remove the image we just built if not latest
                     # - this is done to avoid keeping around too many tagged images
                     #
                     if tag != 'latest':
-                        shell('curl -X DELETE "http://localhost:9001/images/%s:%s?force=true"' % (args.repo[0], tag))
+                        docker.remove_image(image, force=True)
 
                 #
                 # - clean up and remove any untagged image
                 # - this is important otherwise the number of images will slowly creep up
                 #
-                _, lines = shell('curl "http://localhost:9001/images/json?all=0"')
-                js = json.loads(lines[0])
-                victims = [item['Id'] for item in js if item['RepoTags'] == ['<none>:<none>']]
+                images = docker.images(quiet=True, all=True)
+                victims = [item['Id'] for item in images if item['RepoTags'] == ['<none>:<none>']]
                 for victim in victims:
                     logger.debug('removing untagged image %s' % victim)
-                    shell('curl -X DELETE "http://localhost:9001/images/%s?force=true"' % victim)
+                    docker.remove_image(victim, force=True)
 
             finally:
 
