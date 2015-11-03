@@ -175,6 +175,13 @@ if __name__ == '__main__':
                                         local['OK'] = 'true'
 
                                     #
+                                    # - if block specifies environment variables set them now
+                                    #
+                                    if 'env' in blk:
+                                        for key, value in blk['env'].items():
+                                            local[key] = str(value)
+
+                                    #
                                     # - update the environment we'll pass to the shell
                                     # - execute the snippet via a POpen()
                                     #
