@@ -73,6 +73,7 @@ if __name__ == '__main__':
                 sha = js['after']
                 last = js['commits'][0]
                 safe = tag.replace('/', '-')
+                abridged = []
                 log = ['- commit %s (%s)' % (sha[0:10], last['message'])]
                 tmp = path.join('/tmp', safe)
                 try:
@@ -140,62 +141,74 @@ if __name__ == '__main__':
                         with open(path.join(repo, 'integration.yml'), 'r') as f:
                             yml = yaml.load(f)
 
-                            #
-                            # - the yaml can either be an array or a dict
-                            # - force it to an array for convenience
-                            # - otherwise loop and execute each shell snippet in order
-                            #
-                            js = yml if isinstance(yml, list) else [yml]
-                            for blk in js:
-                                log += ['- %s' % blk['step']]
-                                debug = blk['debug'] if 'debug' in blk else 0
-                                cwd = path.join(repo, blk['cwd']) if 'cwd' in blk else repo
-                                for snippet in blk['shell']:
+                        #
+                        # - the yaml can either be an array or a dict
+                        # - force it to an array for convenience
+                        # - otherwise loop and execute each shell snippet in order
+                        #
+                        js = yml if isinstance(yml, list) else [yml]
+                        for blk in js:
+                            log += ['- %s' % blk['step']]
+                            debug = blk['debug'] if 'debug' in blk else 0
+                            cwd = path.join(repo, blk['cwd']) if 'cwd' in blk else repo
+                            for snippet in blk['shell']:
 
-                                    tick = time.time()
-                                    tokens = snippet.split(' ')
-                                    always = tokens[0] == 'no-skip'
-                                    if always or ok:
+                                tick = time.time()
+                                tokens = snippet.split(' ')
+                                always = tokens[0] == 'no-skip'
+                                if always or ok:
 
-                                        #
-                                        # - if we used the 'no-skip' directive make sure we remove
-                                        #   it from the snippet
-                                        #
-                                        if always:
-                                            snippet = ' '.join(tokens[1:])
+                                    #
+                                    # - if we used the 'no-skip' directive make sure we remove
+                                    #   it from the snippet
+                                    #
+                                    if always:
+                                        snippet = ' '.join(tokens[1:])
 
-                                        #
-                                        # - set the $OK and $LOG variables
-                                        #
-                                        local = {'LOG': '\n'.join(log)}
-                                        if ok:
-                                            local['OK'] = 'true'
+                                    #
+                                    # - set the $OK and $LOG variables
+                                    # - make sure to use the abridged log to avoid exploding the maximum
+                                    #   env. variable capacity
+                                    #
+                                    local = {'LOG': '\n'.join(abridged)}
+                                    if ok:
+                                        local['OK'] = 'true'
 
-                                        #
-                                        # - update the environment we'll pass to the shell
-                                        # - execute the snippet via a POpen()
-                                        #
-                                        local.update(var)
-                                        capped = snippet if len(snippet) < 32 else '%s...' % snippet[:64]
-                                        capped = capped.replace('\n', ' ')
-                                        logger.debug('running %s' % capped)
-                                        code, lines = shell(snippet, cwd=cwd, env=local)
-                                        lapse = int(time.time() - tick)
-                                        status = 'passed' if not code else 'failed'
-                                        log += ['[%s] %s (%d seconds, exit code %d)' % (status, capped, lapse, code)]
-                                        if debug:
-                                            log += ['[%s]   . %s' % (status, line) for line in lines]
+                                    #
+                                    # - if block specifies environment variables set them now
+                                    #
+                                    if 'env' in blk:
+                                        for key, value in blk['env'].items():
+                                            local[key] = str(value)
 
-                                        #
-                                        # - switch the ok trigger off if the shell invocation failed
-                                        # - all subsequent shell executions will then be ignored unless
-                                        #   the 'no-skip' directive is used
-                                        #
-                                        if code != 0:
-                                            ok = 0
+                                    #
+                                    # - update the environment we'll pass to the shell
+                                    # - execute the snippet via a POpen()
+                                    #
+                                    local.update(var)
+                                    capped = snippet if len(snippet) < 32 else '%s...' % snippet[:64]
+                                    capped = capped.replace('\n', ' ')
+                                    logger.debug('running <%s>' % capped)
+                                    code, lines = shell(snippet, cwd=cwd, env=local)
+                                    lapse = int(time.time() - tick)
+                                    status = 'passed' if not code else 'failed'
+                                    memento = '[%s] %s (%d seconds, exit code %d)' % (status, capped, lapse, code)
+                                    abridged += [memento]
+                                    log += [memento]
+                                    logger.debug('<%s> -> %d' % (capped, code))
+                                    if debug:
+                                        log += ['[%s]   . %s' % (status, line) for line in lines]
 
-                                    else:
-                                        log += ['[skipped] %s' % snippet]
+                                    #
+                                    # - switch the ok trigger off if the shell invocation failed
+                                    # - all subsequent shell executions will then be ignored unless
+                                    #   the 'no-skip' directive is used
+                                    #
+                                    if code != 0:
+                                        ok = 0
+
+                                else:
+                                    log += ['[skipped] %s' % snippet]
 
                         #
                         # - we went through the whole thing
@@ -224,6 +237,9 @@ if __name__ == '__main__':
                     # - make sure to cleanup our temporary directory
                     # - update redis with
                     #
+                    if not complete:
+                        logger.error('build interrupted (%s)' % log[-1])
+
                     seconds = int(time.time() - started)
                     status = \
                         {
@@ -233,8 +249,7 @@ if __name__ == '__main__':
                             'seconds': seconds
                         }
                     client.set('status:%s' % build['key'], json.dumps(status))
-                    logger.info('%s @ %s -> %s %d seconds' % (tag, sha[0:10], 'ok' if ok else 'ko', seconds))
-                    logger.debug('%s @ %s ->\n %s' % (tag, sha[0:10], '\n '.join(log)))
+                    logger.info('%s @ %s -> %s %d seconds' % (tag, sha[0:10], 'ok' if status['ok'] else 'ko', seconds))
 
             except Exception as failure:
 
